@@ -91,7 +91,7 @@ O Synkro guarda dados fiscais e comerciais. Todas as decisões deste documento d
 | Segredos | **DPAPI** em escopo de máquina (`CryptProtectData`) | Senhas de banco; nunca no YAML |
 | Processos externos | `CreateProcessW` dentro de **Job Object** (encerra a árvore em timeout/queda) | `pg_dump`, `mysqldump`, hooks |
 | Logs | spdlog (arquivo rotativo) + eventos estruturados no SQLite | |
-| Testes | GoogleTest + testes de injeção de falha | |
+| Testes | **Qt Test** + CTest, com testes de injeção de falha | Já vem com o Qt; dispensa dependência extra (substitui o GoogleTest previsto inicialmente) |
 | Build | CMake + vcpkg (manifest mode) | |
 | Instalador | WiX Toolset (MSI) | Binários **assinados** (Authenticode), para evitar bloqueio por antivírus/SmartScreen |
 
