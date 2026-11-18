@@ -854,7 +854,7 @@ void parseDatabaseJob(Reader& r, const YAML::Node& doc, JobConfig& job)
 
     if (const YAML::Node t = doc["tools"]) {
         if (r.requireMap(t, "tools")) {
-            r.checkKeys(t, "tools", {"pg_dump", "pg_dumpall", "pg_restore", "createdb", "mysqldump", "mariadb-dump",
+            r.checkKeys(t, "tools", {"pg_dump", "pg_dumpall", "pg_restore", "psql", "createdb", "mysqldump", "mariadb-dump",
                                      "mysql", "mariadb", "gbak", "sqlcmd"});
             for (auto it = t.begin(); it != t.end(); ++it) {
                 const std::string tool = it->first.Scalar();
@@ -986,8 +986,10 @@ void parseGlobalImpl(Reader& r, const std::optional<YAML::Node>& doc, GlobalConf
                         r.error(v["vault_id"], join(p, "vault_id"), "o mesmo disco aparece duas vezes");
                 }
                 vc.label = r.str(v, "label", p).value_or(vc.id);
-                if (auto s = r.str(v, "path", p))
+                if (auto s = r.str(v, "path", p)) {
                     vc.path = w(*s);
+                    std::replace(vc.path.begin(), vc.path.end(), L'/', L'\\');
+                }
                 vc.rotation = r.boolean(v, "rotation", p).value_or(false);
                 vc.maxAbsenceSeconds = r.duration(v, "max_absence", p).value_or(vc.rotation ? 7 * 86400 : 86400);
                 vc.freeSpaceAlert = r.ratio(v, "free_space_alert", p).value_or(0.15);

@@ -1,5 +1,8 @@
 qt_add_executable(synkro-worker
     main.cpp
+    Cli.h
+    Cli.cpp
+    OpsCommands.cpp
 )
 
 set_target_properties(synkro-worker PROPERTIES WIN32_EXECUTABLE FALSE)
