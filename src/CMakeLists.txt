@@ -12,6 +12,8 @@ add_library(synkro_core STATIC
     platform/windows/AlignedBuffer.h
     platform/windows/Win32.h
     platform/windows/Win32.cpp
+    platform/windows/Volume.h
+    platform/windows/Volume.cpp
 
     scan/ChangeDetector.h
     scan/ChangeDetector.cpp
@@ -20,6 +22,11 @@ add_library(synkro_core STATIC
 
     transfer/SafeCopy.h
     transfer/SafeCopy.cpp
+
+    vault/Vault.h
+    vault/Vault.cpp
+    vault/VaultCandidateCheck.h
+    vault/VaultCandidateCheck.cpp
 )
 add_library(Synkro::Core ALIAS synkro_core)
 
