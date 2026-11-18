@@ -175,6 +175,11 @@ Result<CopyOutcome> copyFileVerified(const std::wstring& source,
             return Error::make(ErrorCode::VerificationFailed, "tamanho gravado difere do lido da origem");
     }
 
+    if (options.beforeCommit) {
+        if (auto st = options.beforeCommit(); !st)
+            return st.error();
+    }
+
     // Um destino somente leitura impediria a substituição.
     const std::wstring extDest = win::toExtendedPath(destination);
     const DWORD destAttrs = ::GetFileAttributesW(extDest.c_str());

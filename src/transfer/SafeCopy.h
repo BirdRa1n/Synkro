@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 
 namespace synkro {
@@ -30,6 +31,12 @@ struct CopyOptions {
     bool preserveTimestamps = true;
     bool preserveAttributes = true;
     std::size_t bufferSize = 1u << 20;
+
+    // Chamado depois que o temporário foi gravado e verificado, imediatamente
+    // antes da troca final. O motor usa este ponto para mover a versão
+    // anterior para versions/<run>/, reduzindo ao mínimo a janela em que
+    // current/ fica sem o arquivo. Uma falha aqui cancela a cópia.
+    std::function<Status()> beforeCommit;
 };
 
 struct CopyOutcome {
