@@ -52,3 +52,9 @@ compile_commands.json
 *creator.user*
 
 *_qmlcache.qrc
+
+# Diretórios de build
+/build/
+/out/
+.qtcreator/
+CMakeUserPresets.json
