@@ -12,6 +12,11 @@ add_library(synkro_core STATIC
     platform/windows/AlignedBuffer.h
     platform/windows/Win32.h
     platform/windows/Win32.cpp
+
+    scan/ChangeDetector.h
+    scan/ChangeDetector.cpp
+    scan/FileScanner.h
+    scan/FileScanner.cpp
 )
 add_library(Synkro::Core ALIAS synkro_core)
 

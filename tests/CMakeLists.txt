@@ -3,6 +3,7 @@
 function(synkro_add_test name)
     qt_add_executable(${name} ${ARGN})
     set_target_properties(${name} PROPERTIES WIN32_EXECUTABLE FALSE)
+    target_include_directories(${name} PRIVATE "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/support")
     target_link_libraries(${name} PRIVATE Synkro::Core Qt6::Test)
     synkro_configure_target(${name})
     add_test(NAME ${name} COMMAND ${name})
@@ -13,3 +14,4 @@ function(synkro_add_test name)
 endfunction()
 
 add_subdirectory(unit)
+add_subdirectory(integration)

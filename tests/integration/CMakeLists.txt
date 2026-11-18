@@ -1,0 +1,1 @@
+synkro_add_test(tst_filescanner tst_filescanner.cpp)
