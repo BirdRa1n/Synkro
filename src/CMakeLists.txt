@@ -17,6 +17,8 @@ add_library(synkro_core STATIC
     config/Values.h
     config/Values.cpp
 
+    core/Paths.h
+    core/Paths.cpp
     core/Result.h
     core/RunId.h
     core/RunId.cpp
@@ -60,6 +62,9 @@ add_library(synkro_core STATIC
     process/ProcessRunner.h
     process/ProcessRunner.cpp
 
+    secrets/SecretStore.h
+    secrets/SecretStore.cpp
+
     scan/ChangeDetector.h
     scan/ChangeDetector.cpp
     scan/FileScanner.h
@@ -83,7 +88,7 @@ add_library(Synkro::Core ALIAS synkro_core)
 target_include_directories(synkro_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(synkro_core
     PUBLIC  Qt6::Core
-    PRIVATE bcrypt yaml-cpp::yaml-cpp vssapi ole32 oleaut32
+    PRIVATE bcrypt crypt32 advapi32 yaml-cpp::yaml-cpp vssapi ole32 oleaut32
 )
 target_compile_definitions(synkro_core PUBLIC
     SYNKRO_VERSION_STRING="${PROJECT_VERSION}"

@@ -43,6 +43,13 @@ struct SecretRef {
     std::string name;
 };
 
+// Onde um segredo é referenciado (para validar se está cadastrado).
+struct SecretUse {
+    std::string key;
+    std::string name;
+    int line = 0;
+};
+
 // ---- Cofres ------------------------------------------------------------------
 
 struct VaultConfig {
@@ -131,6 +138,11 @@ struct DatabaseJob {
     std::vector<DatabaseEntry> databases;
     std::vector<std::wstring> sqliteFiles;
     std::vector<std::string> customCommand;
+    std::vector<std::string> customValidate;
+    std::vector<std::string> customRestore;
+    std::map<std::string, SecretRef> customEnv;
+    std::vector<int> successExitCodes{0};
+    std::map<std::string, std::wstring> tools; // ferramenta -> caminho explícito
     std::string staging = "local";
     bool serverLock = false;
     // Retenção GFS
@@ -162,6 +174,7 @@ struct JobConfig {
 
     FilesJob files;
     DatabaseJob database;
+    std::vector<SecretUse> secrets;
 };
 
 struct ConfigSet {

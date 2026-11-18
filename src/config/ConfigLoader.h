@@ -13,6 +13,10 @@ struct LoadOptions {
     // Confere discos físicos de cofres e origens (exige os discos conectados;
     // cofres ausentes geram aviso, não erro).
     bool checkPhysicalDisks = true;
+
+    // Avisa sobre segredos referenciados e não cadastrados.
+    bool checkSecrets = true;
+    std::wstring secretsFile; // vazio = padrão (<dados>\secrets.dat)
 };
 
 // Lê synkro.yml e jobs/*.yml, valida sintaxe, campos e regras de negócio

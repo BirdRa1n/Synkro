@@ -1,7 +1,9 @@
 #include "config/ConfigLoader.h"
 
 #include "config/Values.h"
+#include "core/Paths.h"
 #include "core/RunId.h"
+#include "secrets/SecretStore.h"
 #include "engine/VaultOps.h"
 #include "platform/windows/Volume.h"
 #include "platform/windows/Win32.h"
@@ -59,9 +61,7 @@ std::wstring defaultConfigDirectory()
     wchar_t buf[MAX_PATH] = {};
     if (::GetEnvironmentVariableW(L"SYNKRO_CONFIG_DIR", buf, MAX_PATH) > 0)
         return buf;
-    if (::GetEnvironmentVariableW(L"ProgramData", buf, MAX_PATH) > 0)
-        return win::joinPath(win::joinPath(buf, L"Synkro"), L"config");
-    return L"C:\\ProgramData\\Synkro\\config";
+    return win::joinPath(dataDirectory(), L"config");
 }
 
 std::string formatDiagnostic(const Diagnostic& d)
@@ -252,8 +252,14 @@ public:
             error(n, join(path, key), "use { secret: <nome> } ou { env: <VARIAVEL> }");
             return {};
         }
-        if (n["secret"])
-            return {SecretRef::Kind::Secret, n["secret"].Scalar()};
+        if (n["secret"]) {
+            const std::string name = n["secret"].Scalar();
+            if (!SecretStore::isValidName(name))
+                error(n["secret"], join(path, key), "nome de segredo inválido (use a-z, 0-9, '-', '_' e '.')");
+            if (secretSink)
+                secretSink->push_back({join(path, key), name, n.Mark().line + 1});
+            return {SecretRef::Kind::Secret, name};
+        }
         if (n["env"])
             return {SecretRef::Kind::Env, n["env"].Scalar()};
         error(n, join(path, key), "use { secret: <nome> } ou { env: <VARIAVEL> }");
@@ -446,6 +452,8 @@ public:
     }
 
     const std::wstring& file() const { return m_file; }
+
+    std::vector<SecretUse>* secretSink = nullptr;
 
 private:
     void add(Severity sev, const YAML::Node& at, const std::string& key, std::string msg)
@@ -780,10 +788,32 @@ void parseDatabaseJob(Reader& r, const YAML::Node& doc, JobConfig& job)
                 d.options["output_name"] = *s;
             if (const YAML::Node env = cuSec["env"]) {
                 if (r.requireMap(env, "custom.env")) {
-                    for (auto it = env.begin(); it != env.end(); ++it)
-                        (void)r.secret(env, it->first.Scalar().c_str(), "custom.env");
+                    for (auto it = env.begin(); it != env.end(); ++it) {
+                        const std::string var = it->first.Scalar();
+                        d.customEnv[var] = r.secret(env, var.c_str(), "custom.env");
+                    }
                 }
             }
+            if (const YAML::Node codes = cuSec["success_exit_codes"]) {
+                d.successExitCodes.clear();
+                if (!codes.IsSequence()) {
+                    r.error(codes, "custom.success_exit_codes", "esperada uma lista de números");
+                } else {
+                    for (const auto& c : codes) {
+                        try {
+                            d.successExitCodes.push_back(std::stoi(c.Scalar()));
+                        } catch (...) {
+                            r.error(c, "custom.success_exit_codes", "esperado um número inteiro");
+                        }
+                    }
+                }
+            }
+            if (const YAML::Node val = cuSec["validate"])
+                if (val.IsMap())
+                    d.customValidate = r.strings(val, "command", "custom.validate");
+            if (const YAML::Node res = cuSec["restore"])
+                if (res.IsMap())
+                    d.customRestore = r.strings(res, "command", "custom.restore");
             for (const char* sub : {"validate", "restore"}) {
                 if (const YAML::Node s = cuSec[sub]) {
                     if (r.requireMap(s, std::string("custom.") + sub)) {
@@ -800,7 +830,19 @@ void parseDatabaseJob(Reader& r, const YAML::Node& doc, JobConfig& job)
 
     if (const YAML::Node t = doc["tools"]) {
         if (r.requireMap(t, "tools")) {
-            r.checkKeys(t, "tools", {"pg_dump", "pg_dumpall", "pg_restore", "mysqldump", "mariadb-dump", "mysql", "gbak", "sqlcmd"});
+            r.checkKeys(t, "tools", {"pg_dump", "pg_dumpall", "pg_restore", "createdb", "mysqldump", "mariadb-dump",
+                                     "mysql", "mariadb", "gbak", "sqlcmd"});
+            for (auto it = t.begin(); it != t.end(); ++it) {
+                const std::string tool = it->first.Scalar();
+                const std::string value = it->second.IsScalar() ? it->second.Scalar() : "";
+                if (value.empty() || value == "auto")
+                    continue;
+                std::wstring p = w(value);
+                std::replace(p.begin(), p.end(), L'/', L'\\');
+                if (!isAbsoluteWindowsPath(p))
+                    r.error(it->second, "tools." + tool, "informe \"auto\" ou o caminho completo do executável");
+                d.tools[tool] = p;
+            }
         }
     }
     d.staging = r.oneOf(doc, "staging", "", {"local", "first_vault"}).value_or("local");
@@ -1004,6 +1046,7 @@ void parseJobImpl(Reader& r, const std::optional<YAML::Node>& doc, const GlobalC
 {
     if (!doc || !r.requireMap(*doc, ""))
         return;
+    r.secretSink = &job.secrets;
     job.line = doc->Mark().line + 1;
 
     static const std::initializer_list<const char*> common = {
@@ -1280,6 +1323,19 @@ ConfigSet loadConfig(const std::wstring& directory, const LoadOptions& options)
     checkDependencies(set);
     if (options.checkPhysicalDisks)
         checkPhysicalDisks(set);
+
+    // Segredos referenciados precisam estar cadastrados (só os nomes são lidos).
+    if (options.checkSecrets) {
+        const SecretStore store(options.secretsFile.empty() ? secretsFile() : options.secretsFile);
+        for (const auto& j : set.jobs) {
+            for (const auto& s : j.secrets) {
+                if (!store.contains(s.name))
+                    set.diagnostics.push_back({Severity::Warning, j.file, s.line, 1, s.key,
+                                               "segredo \"" + s.name + "\" não cadastrado nesta máquina; cadastre com: "
+                                               "synkro-worker secret set " + s.name});
+            }
+        }
+    }
     return set;
 }
 

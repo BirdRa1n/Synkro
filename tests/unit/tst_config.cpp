@@ -247,6 +247,7 @@ engine: firebird
     {
         LoadOptions opt;
         opt.checkPhysicalDisks = false;
+        opt.checkSecrets = false;
         const ConfigSet set = loadConfig(QStringLiteral(SYNKRO_SOURCE_DIR "/config/examples").replace('/', '\\').toStdWString(), opt);
         QVERIFY2(!set.hasErrors(), qPrintable(dump(set.diagnostics)));
         QCOMPARE(set.warningCount(), size_t(0));
