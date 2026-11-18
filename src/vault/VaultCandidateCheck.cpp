@@ -178,8 +178,10 @@ CandidateReport checkCandidate(const CandidateRequest& req)
                 gib(v.freeBytes) + " livres; recomendado " + gib(needed));
     }
 
+    const std::wstring location = req.vaultLocation.empty() ? v.mountPoint : req.vaultLocation;
+
     // 6. Cofre já existente.
-    auto existing = readIdentity(v.mountPoint);
+    auto existing = readIdentity(location);
     if (existing)
         add(CheckId::ExistingVault, CheckSeverity::Info, "Já contém um cofre do Synkro",
             "Cofre \"" + existing.value().label.toStdString() + "\" (" + existing.value().vaultId.toStdString()
@@ -187,7 +189,7 @@ CandidateReport checkCandidate(const CandidateRequest& req)
 
     // 7. Teste de gravação e releitura sem cache.
     if (req.runWriteTest) {
-        if (auto st = writeTest(v.mountPoint); st)
+        if (auto st = writeTest(location); st)
             add(CheckId::WriteTest, CheckSeverity::Ok, "Teste de gravação e leitura",
                 "Gravou 1 MB, releu sem cache e conferiu o SHA-256.");
         else

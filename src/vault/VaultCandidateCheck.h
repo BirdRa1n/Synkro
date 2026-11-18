@@ -33,6 +33,7 @@ struct CheckFinding {
 
 struct CandidateRequest {
     std::wstring candidatePath;              // ex.: "E:\"
+    std::wstring vaultLocation;              // onde o cofre ficará; vazio = raiz do volume
     std::vector<std::wstring> sourcePaths;   // origens das tarefas que usarão o cofre
     std::vector<std::wstring> otherVaults;   // outros cofres da mesma tarefa
     std::uint64_t estimatedSourceBytes = 0;  // 0 = pular checagem de espaço
