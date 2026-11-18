@@ -2,7 +2,14 @@
 # nunca de Qt Widgets.
 
 add_library(synkro_core STATIC
+    catalog/Catalog.h
+    catalog/Catalog.cpp
+    catalog/Manifest.h
+    catalog/Manifest.cpp
+
     core/Result.h
+    core/RunId.h
+    core/RunId.cpp
     core/Version.h
     core/Version.cpp
 
@@ -23,6 +30,7 @@ add_library(synkro_core STATIC
     transfer/SafeCopy.h
     transfer/SafeCopy.cpp
 
+    vault/JobLayout.h
     vault/Vault.h
     vault/Vault.cpp
     vault/VaultCandidateCheck.h
