@@ -9,7 +9,7 @@
 
 namespace synkro::win {
 
-const char* toString(DriveKind kind) noexcept
+const char* nameOf(DriveKind kind) noexcept
 {
     switch (kind) {
     case DriveKind::Fixed:     return "fixed";

@@ -51,7 +51,9 @@ ChangeSet detectChanges(const std::vector<KnownFile>& previous,
         if (cur.hasExtendedInfo && old.hasExtendedInfo) {
             if (options.compareChangeTime && cur.changeTime != old.changeTime)
                 reasons |= ReasonChangeTime;
-            if (options.compareFileId && (cur.fileId != old.fileId || cur.volumeSerial != old.volumeSerial))
+            // O número de série do volume não entra: um snapshot VSS tem outro
+            // número, mas o FileId do arquivo é o mesmo.
+            if (options.compareFileId && cur.fileId != old.fileId)
                 reasons |= ReasonFileId;
         }
         if (cur.relativePath != old.relativePath)

@@ -27,6 +27,8 @@ add_library(synkro_core STATIC
     engine/BackupEngine.cpp
     engine/Guards.h
     engine/Guards.cpp
+    engine/Hooks.h
+    engine/Hooks.cpp
     engine/Journal.h
     engine/Journal.cpp
     engine/Recovery.h
@@ -48,10 +50,15 @@ add_library(synkro_core STATIC
     platform/windows/AlignedBuffer.h
     platform/windows/Locks.h
     platform/windows/Locks.cpp
+    platform/windows/Snapshot.h
+    platform/windows/Snapshot.cpp
     platform/windows/Win32.h
     platform/windows/Win32.cpp
     platform/windows/Volume.h
     platform/windows/Volume.cpp
+
+    process/ProcessRunner.h
+    process/ProcessRunner.cpp
 
     scan/ChangeDetector.h
     scan/ChangeDetector.cpp
@@ -76,7 +83,7 @@ add_library(Synkro::Core ALIAS synkro_core)
 target_include_directories(synkro_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(synkro_core
     PUBLIC  Qt6::Core
-    PRIVATE bcrypt yaml-cpp::yaml-cpp
+    PRIVATE bcrypt yaml-cpp::yaml-cpp vssapi ole32 oleaut32
 )
 target_compile_definitions(synkro_core PUBLIC
     SYNKRO_VERSION_STRING="${PROJECT_VERSION}"

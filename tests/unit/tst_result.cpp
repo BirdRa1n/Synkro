@@ -21,7 +21,7 @@ private slots:
         QVERIFY(!r.ok());
         QCOMPARE(r.error().code, ErrorCode::NotFound);
         QCOMPARE(r.error().systemCode, 2ul);
-        QCOMPARE(QString::fromUtf8(toString(r.error().code)), QStringLiteral("not_found"));
+        QCOMPARE(QString::fromUtf8(nameOf(r.error().code)), QStringLiteral("not_found"));
     }
 
     void voidStatus()

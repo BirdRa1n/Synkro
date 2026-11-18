@@ -19,7 +19,7 @@ struct GuardPolicy {
 
 enum class GuardCode { None, EmptySource, SentinelMissing, MassDeletion, MassModification };
 
-const char* toString(GuardCode code) noexcept;
+const char* nameOf(GuardCode code) noexcept;
 
 struct GuardVerdict {
     GuardCode code = GuardCode::None;

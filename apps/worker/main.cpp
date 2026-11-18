@@ -60,7 +60,7 @@ QString q(const std::string& s) { return QString::fromStdString(s); }
 
 int fail(const synkro::Error& e)
 {
-    err() << "erro [" << synkro::toString(e.code) << "]: " << q(e.message) << Qt::endl;
+    err() << "erro [" << synkro::nameOf(e.code) << "]: " << q(e.message) << Qt::endl;
     return ExitFailure;
 }
 
@@ -166,12 +166,12 @@ int cmdConfig(const QStringList& args)
 
 void printBackupResult(const synkro::BackupResult& r)
 {
-    out() << "\nexecução " << q(r.runId) << ": " << synkro::toString(r.status) << "\n";
+    out() << "\nexecução " << q(r.runId) << ": " << synkro::nameOf(r.status) << "\n";
     if (!r.error.empty())
         out() << "  " << q(r.error) << "\n";
     out() << "  origem: " << r.filesScanned << " arquivos, " << humanBytes(r.bytesScanned) << "\n";
     for (const auto& v : r.vaults) {
-        out() << "  cofre " << (v.vaultId.isEmpty() ? q(v.location) : v.vaultId) << " [" << synkro::toString(v.status)
+        out() << "  cofre " << (v.vaultId.isEmpty() ? q(v.location) : v.vaultId) << " [" << synkro::nameOf(v.status)
               << "]";
         if (!v.location.empty())
             out() << " em " << q(v.location);
@@ -179,7 +179,7 @@ void printBackupResult(const synkro::BackupResult& r)
         if (!v.error.empty())
             out() << "    erro: " << q(v.error) << "\n";
         if (v.guard.blocked())
-            out() << "    BLOQUEADO (" << synkro::toString(v.guard.code) << "): " << q(v.guard.message)
+            out() << "    BLOQUEADO (" << synkro::nameOf(v.guard.code) << "): " << q(v.guard.message)
                   << "\n    Revise a origem; para aplicar mesmo assim use --confirm-mass-change.\n";
         if (v.status == synkro::VaultRunStatus::Success || v.status == synkro::VaultRunStatus::Partial)
             out() << "    novos " << v.added << " · alterados " << v.modified << " · excluídos " << v.deleted
@@ -484,7 +484,7 @@ void printReport(const synkro::vault::CandidateReport& report)
         for (auto d : v.physicalDisks)
             disks << QString::number(d);
         out() << "volume:  " << q(v.mountPoint) << "  " << q(v.label) << "\n"
-              << "tipo:    " << synkro::win::toString(v.kind) << " · " << q(v.fileSystem)
+              << "tipo:    " << synkro::win::nameOf(v.kind) << " · " << q(v.fileSystem)
               << " · disco físico " << (disks.isEmpty() ? QStringLiteral("?") : disks.join(QLatin1Char(','))) << "\n"
               << "espaço:  " << humanBytes(v.freeBytes) << " livres de " << humanBytes(v.totalBytes) << "\n\n";
     }

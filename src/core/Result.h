@@ -23,7 +23,7 @@ enum class ErrorCode {
     Internal,
 };
 
-const char* toString(ErrorCode code) noexcept;
+const char* nameOf(ErrorCode code) noexcept;
 
 struct Error {
     ErrorCode code = ErrorCode::Internal;

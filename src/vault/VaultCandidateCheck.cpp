@@ -12,7 +12,7 @@
 
 namespace synkro::vault {
 
-const char* toString(CheckSeverity severity) noexcept
+const char* nameOf(CheckSeverity severity) noexcept
 {
     switch (severity) {
     case CheckSeverity::Ok:       return "ok";

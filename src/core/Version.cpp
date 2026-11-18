@@ -9,7 +9,7 @@ const char* versionString() noexcept
     return SYNKRO_VERSION_STRING;
 }
 
-const char* toString(ErrorCode code) noexcept
+const char* nameOf(ErrorCode code) noexcept
 {
     switch (code) {
     case ErrorCode::InvalidArgument:         return "invalid_argument";

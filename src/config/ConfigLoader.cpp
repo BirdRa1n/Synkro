@@ -1070,7 +1070,6 @@ void parseJobImpl(Reader& r, const std::optional<YAML::Node>& doc, const GlobalC
             r.hookList(h, "after", "hooks", job.hooks.after);
             r.hookList(h, "on_success", "hooks", job.hooks.onSuccess);
             r.hookList(h, "on_failure", "hooks", job.hooks.onFailure);
-            r.warn(h, "hooks", "comandos antes/depois ainda não são executados nesta versão (Fase 2)");
         }
     }
 

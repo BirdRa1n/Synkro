@@ -9,15 +9,20 @@
 #include "engine/RunSummary.h"
 #include "engine/VaultOps.h"
 #include "platform/windows/Locks.h"
+#include "platform/windows/Snapshot.h"
+#include "platform/windows/Volume.h"
 #include "scan/ChangeDetector.h"
 #include "vault/JobLayout.h"
 #include "vault/Vault.h"
 
 #include <QDateTime>
 
+#include <map>
+#include <optional>
+
 namespace synkro {
 
-const char* toString(VaultRunStatus s) noexcept
+const char* nameOf(VaultRunStatus s) noexcept
 {
     switch (s) {
     case VaultRunStatus::Success: return "success";
@@ -28,7 +33,7 @@ const char* toString(VaultRunStatus s) noexcept
     return "unknown";
 }
 
-const char* toString(RunStatus s) noexcept
+const char* nameOf(RunStatus s) noexcept
 {
     switch (s) {
     case RunStatus::Success:        return "success";
@@ -46,8 +51,9 @@ constexpr std::size_t kMaxReportedFileErrors = 50;
 
 class VaultRun {
 public:
-    VaultRun(const BackupRequest& req, const std::wstring& runId, const ScanResult& scan, const VaultTarget& target)
-        : m_req(req), m_runId(runId), m_scan(scan), m_target(target)
+    VaultRun(const BackupRequest& req, const std::wstring& runId, const ScanResult& scan, const VaultTarget& target,
+             const std::wstring& readRoot)
+        : m_req(req), m_runId(runId), m_scan(scan), m_target(target), m_readRoot(readRoot)
     {
         m_result.location = target.location;
     }
@@ -187,7 +193,7 @@ private:
             return st;
 
         m_result.status = m_result.failed > 0 ? VaultRunStatus::Partial : VaultRunStatus::Success;
-        writeSummary(toString(m_result.status), {}, startedAt);
+        writeSummary(nameOf(m_result.status), {}, startedAt);
 
         journal.value().close();
         ::DeleteFileW(win::toExtendedPath(m_layout.journalFile(m_runId)).c_str());
@@ -206,7 +212,7 @@ private:
         ManifestRecord rec;
         rec.path = cur.relativePath;
 
-        const std::wstring source = win::joinPath(m_req.sourceRoot, win::fromCatalogPath(cur.relativePath));
+        const std::wstring source = win::joinPath(m_readRoot, win::fromCatalogPath(cur.relativePath));
         // Em troca de maiúsculas/minúsculas, o arquivo antigo em current/ tem o nome antigo.
         const std::wstring previousPath = previous ? previous->meta.relativePath : std::wstring();
         const std::wstring destination = m_layout.currentFile(previous ? previousPath : cur.relativePath);
@@ -311,6 +317,7 @@ private:
     const std::wstring& m_runId;
     const ScanResult& m_scan;
     const VaultTarget& m_target;
+    const std::wstring& m_readRoot; // origem real ou o caminho equivalente dentro do snapshot VSS
     vault::JobLayout m_layout;
     VaultRunResult m_result;
 };
@@ -363,6 +370,61 @@ BackupResult runBackup(const BackupRequest& req)
         return result;
     }
 
+    // depends_on: se uma dependência estiver rodando, espera ela terminar.
+    for (const auto& dep : req.dependsOn) {
+        auto depLock = win::JobLock::acquire(dep, static_cast<unsigned long>(req.dependencyWaitSeconds * 1000));
+        if (!depLock) {
+            result.error = "a tarefa " + win::toUtf8(dep) + " (depends_on) não terminou a tempo";
+            return result;
+        }
+    }
+
+    const std::map<std::wstring, std::wstring> vars = {
+        {L"job", req.jobId},
+        {L"run_id", result.runId},
+        {L"date", QDate::currentDate().toString(Qt::ISODate).toStdWString()},
+    };
+    auto finishHooks = [&](BackupResult& r) {
+        // after: sempre; on_success/on_failure conforme o resultado final.
+        if (!runHooks(req.hooks.after, "after", vars, r.hooks) && r.status == RunStatus::Success)
+            r.status = RunStatus::Degraded;
+        if (r.status == RunStatus::Success)
+            runHooks(req.hooks.onSuccess, "on_success", vars, r.hooks);
+        else
+            runHooks(req.hooks.onFailure, "on_failure", vars, r.hooks);
+    };
+
+    if (!runHooks(req.hooks.before, "before", vars, result.hooks)) {
+        result.status = RunStatus::Failed;
+        result.error = "um comando de hooks.before falhou; o backup não foi executado";
+        runHooks(req.hooks.onFailure, "on_failure", vars, result.hooks);
+        return result;
+    }
+
+    // Snapshot VSS: a origem é lida de uma cópia congelada do volume.
+    std::optional<win::VolumeSnapshot> snapshot;
+    std::wstring readRoot = req.sourceRoot;
+    if (req.useSnapshot) {
+        auto volume = win::queryVolume(req.sourceRoot);
+        auto snap = volume ? win::VolumeSnapshot::create(volume.value().mountPoint)
+                           : Result<win::VolumeSnapshot>(volume.error());
+        if (snap) {
+            snapshot.emplace(std::move(snap).value());
+            readRoot = snapshot->translate(req.sourceRoot);
+            result.snapshotUsed = !readRoot.empty();
+            if (readRoot.empty())
+                readRoot = req.sourceRoot;
+        } else {
+            result.snapshotNote = snap.error().message;
+            if (!req.continueWithoutSnapshot) {
+                result.status = RunStatus::Failed;
+                result.error = "snapshot VSS indisponível: " + snap.error().message;
+                finishHooks(result);
+                return result;
+            }
+        }
+    }
+
     // Origem ausente nunca é interpretada como "tudo foi excluído".
     ScanOptions scanOpt;
     scanOpt.readFileIds = req.readFileIds;
@@ -370,9 +432,10 @@ BackupResult runBackup(const BackupRequest& req)
         const PathFilter& f = req.filter;
         scanOpt.filter = [&f](std::wstring_view p, bool isDir) { return f.accepts(p, isDir); };
     }
-    auto scan = scanDirectory(req.sourceRoot, scanOpt);
+    auto scan = scanDirectory(readRoot, scanOpt);
     if (!scan) {
         result.error = "origem inacessível: " + scan.error().message;
+        finishHooks(result);
         return result;
     }
     result.filesScanned = scan.value().files.size();
@@ -385,6 +448,7 @@ BackupResult runBackup(const BackupRequest& req)
         if (result.sourceGuard.blocked()) {
             result.status = RunStatus::Blocked;
             result.error = result.sourceGuard.message;
+            finishHooks(result);
             return result;
         }
     }
@@ -392,13 +456,15 @@ BackupResult runBackup(const BackupRequest& req)
     for (const auto& target : req.vaults) {
         if (req.progress)
             req.progress({ProgressKind::VaultStarted, target.location, {}, 0, 0});
-        VaultRun run(req, result.runId, scan.value(), target);
+        VaultRun run(req, result.runId, scan.value(), target, readRoot);
         result.vaults.push_back(run.run());
         if (req.progress)
             req.progress({ProgressKind::VaultFinished, target.location, {}, 0, 0});
     }
 
     result.status = aggregate(result.vaults, req.minVaultsOk);
+    snapshot.reset(); // libera o snapshot antes dos comandos "after"
+    finishHooks(result);
     return result;
 }
 

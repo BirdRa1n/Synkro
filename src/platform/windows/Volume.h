@@ -28,6 +28,6 @@ struct VolumeInfo {
 // não exigem privilégio de administrador.
 Result<VolumeInfo> queryVolume(const std::wstring& path);
 
-const char* toString(DriveKind kind) noexcept;
+const char* nameOf(DriveKind kind) noexcept;
 
 } // namespace synkro::win

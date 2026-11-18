@@ -11,7 +11,7 @@ constexpr char kFormat[] = "synkro-manifest";
 constexpr int kFormatVersion = 1;
 } // namespace
 
-const char* toString(ManifestOp op) noexcept
+const char* nameOf(ManifestOp op) noexcept
 {
     switch (op) {
     case ManifestOp::Added:    return "added";
@@ -34,7 +34,7 @@ static std::optional<ManifestOp> parseOp(const QString& s)
 QJsonObject toJson(const ManifestRecord& r)
 {
     QJsonObject o;
-    o.insert(QStringLiteral("op"), QString::fromLatin1(toString(r.op)));
+    o.insert(QStringLiteral("op"), QString::fromLatin1(nameOf(r.op)));
     o.insert(QStringLiteral("path"), QString::fromStdWString(r.path));
     if (r.entry)
         o.insert(QStringLiteral("entry"), toJson(*r.entry));

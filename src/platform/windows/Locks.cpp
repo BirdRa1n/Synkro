@@ -4,6 +4,11 @@ namespace synkro::win {
 
 Result<JobLock> JobLock::tryAcquire(const std::wstring& jobId)
 {
+    return acquire(jobId, 0);
+}
+
+Result<JobLock> JobLock::acquire(const std::wstring& jobId, unsigned long timeoutMs)
+{
     JobLock lock;
     const std::wstring suffix = L"Synkro.Job." + jobId;
 
@@ -14,7 +19,7 @@ Result<JobLock> JobLock::tryAcquire(const std::wstring& jobId)
         return lastError("criar trava da tarefa");
     lock.m_mutex.reset(h);
 
-    const DWORD wait = ::WaitForSingleObject(h, 0);
+    const DWORD wait = ::WaitForSingleObject(h, timeoutMs);
     if (wait == WAIT_OBJECT_0 || wait == WAIT_ABANDONED)
         return lock;
     if (wait == WAIT_TIMEOUT)

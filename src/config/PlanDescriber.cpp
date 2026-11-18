@@ -75,7 +75,8 @@ void describeFiles(std::ostringstream& o, const ConfigSet& set, const JobConfig&
     int step = 1;
     o << "  " << step++ << ". Ler a pasta " << win::toUtf8(f.source);
     if (f.vss)
-        o << " a partir de um snapshot VSS (arquivos em uso ficam consistentes)"
+        o << " a partir de um snapshot VSS (arquivos em uso ficam consistentes; exige execução como "
+             "administrador/SYSTEM)"
           << (f.continueWithoutSnapshot ? "; se o snapshot falhar, copia sem ele e avisa" : "; se o snapshot falhar, a tarefa falha");
     o << ".\n";
     if (!f.include.empty()) {
@@ -166,18 +167,6 @@ std::vector<std::string> pendingFeatures(const JobConfig& job)
     std::vector<std::string> out;
     if (job.type == "database")
         out.push_back("o backup de bancos de dados (a configuração é apenas validada)");
-    if (!job.schedule.empty())
-        out.push_back("o agendamento automático pelo Agendador de Tarefas (execute com synkro-worker backup)");
-    if (!job.dependsOn.empty())
-        out.push_back("a ordem automática entre tarefas (depends_on)");
-    if (job.type == "files" && job.files.vss)
-        out.push_back("o snapshot VSS (a cópia é direta; arquivos alterados durante a cópia são descartados e "
-                      "tentados de novo na próxima execução)");
-    if (!job.hooks.before.empty() || !job.hooks.after.empty() || !job.hooks.onSuccess.empty()
-        || !job.hooks.onFailure.empty())
-        out.push_back("os comandos antes/depois (hooks)");
-    if (job.shutdownAfter)
-        out.push_back("o desligamento automático");
     return out;
 }
 
@@ -250,7 +239,7 @@ std::string describeJob(const ConfigSet& set, const JobConfig& job)
 
     const auto pending = pendingFeatures(job);
     if (!pending.empty()) {
-        o << "\nAINDA NÃO DISPONÍVEL NESTA VERSÃO (previsto para a Fase 2)\n";
+        o << "\nAINDA NÃO DISPONÍVEL NESTA VERSÃO\n";
         for (const auto& p : pending)
             o << "  • " << p << "\n";
     }

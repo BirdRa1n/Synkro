@@ -24,6 +24,27 @@ Result<BackupRequest> makeBackupRequest(const ConfigSet& set, const JobConfig& j
     req.retention.keepVersionsDays = static_cast<int>(job.files.keepVersionsSeconds / 86400);
     req.retention.keepMinRuns = job.files.keepMinVersions;
     req.retention.keepDeletedDays = static_cast<int>(job.files.keepDeletedSeconds / 86400);
+    req.useSnapshot = job.files.vss;
+    req.continueWithoutSnapshot = job.files.continueWithoutSnapshot;
+    for (const auto& d : job.dependsOn)
+        req.dependsOn.push_back(win::fromUtf8(d));
+    if (job.timeoutSeconds > 0)
+        req.dependencyWaitSeconds = job.timeoutSeconds;
+
+    auto convert = [](const std::vector<HookCommand>& in, std::vector<HookSpec>& out) {
+        for (const auto& h : in) {
+            HookSpec s;
+            for (const auto& a : h.run)
+                s.args.push_back(win::fromUtf8(a));
+            s.timeoutSeconds = h.timeoutSeconds;
+            s.failOnError = h.failOnError;
+            out.push_back(std::move(s));
+        }
+    };
+    convert(job.hooks.before, req.hooks.before);
+    convert(job.hooks.after, req.hooks.after);
+    convert(job.hooks.onSuccess, req.hooks.onSuccess);
+    convert(job.hooks.onFailure, req.hooks.onFailure);
 
     for (const auto& id : job.vaults) {
         const VaultConfig* vc = set.global.findVault(id);

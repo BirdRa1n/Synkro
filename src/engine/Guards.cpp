@@ -7,7 +7,7 @@
 
 namespace synkro {
 
-const char* toString(GuardCode code) noexcept
+const char* nameOf(GuardCode code) noexcept
 {
     switch (code) {
     case GuardCode::None:             return "none";

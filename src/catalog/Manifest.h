@@ -10,7 +10,7 @@ namespace synkro {
 
 enum class ManifestOp { Added, Modified, Deleted, Failed };
 
-const char* toString(ManifestOp op) noexcept;
+const char* nameOf(ManifestOp op) noexcept;
 
 // Uma mudança aplicada (ou tentada) numa execução.
 //

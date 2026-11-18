@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/Guards.h"
+#include "engine/Hooks.h"
 #include "scan/PathFilter.h"
 #include "transfer/SafeCopy.h"
 
@@ -48,14 +49,27 @@ struct BackupRequest {
     bool overrideGuards = false;  // confirmação explícita do usuário
     bool applyRetention = true;
     RetentionPolicy retention;
+    HookSet hooks;
+
+    // Snapshot VSS do volume de origem (exige administrador). Sem privilégio
+    // ou se o snapshot falhar: copia direto se `continueWithoutSnapshot`,
+    // senão o run falha.
+    bool useSnapshot = false;
+    bool continueWithoutSnapshot = true;
+
+    // Tarefas que precisam terminar antes desta começar (depends_on). Se
+    // estiverem rodando, esta execução espera até `dependencyWaitSeconds`.
+    std::vector<std::wstring> dependsOn;
+    std::int64_t dependencyWaitSeconds = 4 * 3600;
+
     std::function<void(const ProgressEvent&)> progress;
 };
 
 enum class VaultRunStatus { Success, Partial, Failed, Blocked };
 enum class RunStatus { Success, Degraded, Failed, Blocked, AlreadyRunning };
 
-const char* toString(VaultRunStatus s) noexcept;
-const char* toString(RunStatus s) noexcept;
+const char* nameOf(VaultRunStatus s) noexcept;
+const char* nameOf(RunStatus s) noexcept;
 
 struct VaultRunResult {
     std::wstring location;
@@ -77,6 +91,9 @@ struct BackupResult {
     std::uint64_t filesScanned = 0;
     std::uint64_t bytesScanned = 0;
     std::vector<VaultRunResult> vaults;
+    std::vector<HookOutcome> hooks;
+    bool snapshotUsed = false;
+    std::string snapshotNote;     // por que o snapshot não foi usado, quando pedido
 };
 
 // Executa um backup de arquivos (architecture.md §6): trava a tarefa, varre a

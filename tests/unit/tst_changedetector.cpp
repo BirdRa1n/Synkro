@@ -94,6 +94,14 @@ private slots:
 
         FileEntry withoutInfo = entry(L"db.fdb", 100, 50);
         QVERIFY(detectChanges({old}, {withoutInfo}).empty());
+
+        // Lido de um snapshot VSS: outro número de série de volume, mesmo arquivo.
+        FileEntry fromSnapshot = entry(L"db.fdb", 100, 50);
+        fromSnapshot.hasExtendedInfo = true;
+        fromSnapshot.changeTime = 50;
+        fromSnapshot.fileId = old.meta.fileId;
+        fromSnapshot.volumeSerial = 0x1234;
+        QVERIFY(detectChanges({old}, {fromSnapshot}).empty());
     }
 
     void massDeletionRatio()

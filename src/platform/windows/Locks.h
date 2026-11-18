@@ -15,6 +15,9 @@ public:
     // AlreadyExists se outra execução detém a trava.
     static Result<JobLock> tryAcquire(const std::wstring& jobId);
 
+    // Espera até `timeoutMs` pela trava (usado para depends_on).
+    static Result<JobLock> acquire(const std::wstring& jobId, unsigned long timeoutMs);
+
     JobLock(JobLock&& other) noexcept : m_mutex(std::move(other.m_mutex)) {}
     JobLock& operator=(JobLock&&) = delete;
     ~JobLock();
