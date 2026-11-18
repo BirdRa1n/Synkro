@@ -8,8 +8,12 @@ add_library(synkro_core STATIC
     catalog/Manifest.cpp
 
     config/Config.h
+    config/ConfigApply.h
+    config/ConfigApply.cpp
     config/ConfigLoader.h
     config/ConfigLoader.cpp
+    config/ShutdownPolicy.h
+    config/ShutdownPolicy.cpp
     config/JobRequest.h
     config/JobRequest.cpp
     config/PlanDescriber.h
@@ -56,6 +60,8 @@ add_library(synkro_core STATIC
     engine/Retention.cpp
     engine/RunSummary.h
     engine/RunSummary.cpp
+    engine/Scrub.h
+    engine/Scrub.cpp
     engine/VaultOps.h
     engine/VaultOps.cpp
     engine/Verify.h
@@ -67,8 +73,12 @@ add_library(synkro_core STATIC
     platform/windows/AlignedBuffer.h
     platform/windows/Locks.h
     platform/windows/Locks.cpp
+    platform/windows/Shutdown.h
+    platform/windows/Shutdown.cpp
     platform/windows/Snapshot.h
     platform/windows/Snapshot.cpp
+    platform/windows/TaskScheduler.h
+    platform/windows/TaskScheduler.cpp
     platform/windows/Win32.h
     platform/windows/Win32.cpp
     platform/windows/Volume.h
@@ -79,6 +89,11 @@ add_library(synkro_core STATIC
 
     secrets/SecretStore.h
     secrets/SecretStore.cpp
+
+    state/Alerts.h
+    state/Alerts.cpp
+    state/StateStore.h
+    state/StateStore.cpp
 
     scan/ChangeDetector.h
     scan/ChangeDetector.cpp
@@ -103,7 +118,7 @@ add_library(Synkro::Core ALIAS synkro_core)
 target_include_directories(synkro_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(synkro_core
     PUBLIC  Qt6::Core
-    PRIVATE bcrypt crypt32 advapi32 yaml-cpp::yaml-cpp vssapi ole32 oleaut32 Synkro::SQLite3 Synkro::Zstd
+    PRIVATE bcrypt crypt32 advapi32 yaml-cpp::yaml-cpp vssapi ole32 oleaut32 taskschd Synkro::SQLite3 Synkro::Zstd
 )
 target_compile_definitions(synkro_core PUBLIC
     SYNKRO_VERSION_STRING="${PROJECT_VERSION}"
