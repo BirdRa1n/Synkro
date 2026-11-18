@@ -154,6 +154,14 @@ schedule:
         QVERIFY(hasError(d, "schedule[2].every"));
     }
 
+    void duplicateKeysRejected()
+    {
+        const auto d = diagnose(std::string(kMinimalFiles) + "schedule:\n  - daily: \"03:00\"\n");
+        QVERIFY2(hasError(d, "schedule", "repetido"), qPrintable(dump(d)));
+        const auto nested = diagnose(std::string(kMinimalFiles) + "guards:\n  max_deleted: 10%\n  max_deleted: 90%\n");
+        QVERIFY(hasError(nested, "guards.max_deleted", "repetido"));
+    }
+
     void undeclaredVault()
     {
         const auto d = diagnose(std::string(kMinimalFiles) + "vaults: [a, zzz]\n");

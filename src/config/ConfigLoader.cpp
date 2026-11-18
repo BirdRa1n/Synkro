@@ -109,10 +109,25 @@ public:
         return false;
     }
 
+    // O yaml-cpp aceita chaves repetidas e descarta uma delas em silêncio;
+    // numa configuração de backup isso esconderia um agendamento ou cofre.
+    void checkDuplicates(const YAML::Node& map, const std::string& path)
+    {
+        if (!map.IsMap())
+            return;
+        std::set<std::string> seen;
+        for (auto it = map.begin(); it != map.end(); ++it) {
+            const std::string key = it->first.Scalar();
+            if (!seen.insert(key).second)
+                error(it->first, join(path, key), "campo repetido; apenas uma das ocorrências seria usada");
+        }
+    }
+
     void checkKeys(const YAML::Node& map, const std::string& path, std::initializer_list<const char*> allowed)
     {
         if (!map.IsMap())
             return;
+        checkDuplicates(map, path);
         for (auto it = map.begin(); it != map.end(); ++it) {
             const std::string key = it->first.Scalar();
             bool ok = false;
@@ -1079,6 +1094,7 @@ void parseJobImpl(Reader& r, const std::optional<YAML::Node>& doc, const GlobalC
     job.type = r.oneOf(*doc, "type", "", {"files", "database"}, true).value_or("");
 
     // Campos permitidos dependem do tipo.
+    r.checkDuplicates(*doc, "");
     if (doc->IsMap()) {
         for (auto it = doc->begin(); it != doc->end(); ++it) {
             const std::string key = it->first.Scalar();
