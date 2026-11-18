@@ -28,6 +28,8 @@ Regra: em tarefas do tipo `files`, o Synkro **exclui automaticamente** pastas de
 | SQL Server | 2016+ | `BACKUP DATABASE ... WITH COPY_ONLY` | `sqlcmd` / ODBC | 4 |
 | Personalizado | — | Comando definido pelo usuário | qualquer | 2 |
 
+> **Estado da implementação:** PostgreSQL (formatos `custom` e `plain`; `directory` ainda não é suportado), MySQL/MariaDB, SQLite e comando personalizado estão implementados, com guardas, retenção GFS e `restore-db`. Pendentes: a trava no servidor (§4A.3, `remote.server_lock`) — até lá, configure o dump de um servidor compartilhado em uma única máquina — e o teste de restauração automático (§9.1, Fase 4).
+
 O Synkro **não embute** `pg_dump` nem `mysqldump`: usa as ferramentas cliente instaladas na máquina, localizadas automaticamente ou pelo caminho informado no YAML (ver 4.1).
 
 ---

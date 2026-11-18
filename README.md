@@ -2,7 +2,7 @@
 
 Backup incremental, versionado e redundante para dados críticos no Windows, com foco em sistemas PDV: arquivos fiscais, configurações e bancos de dados (PostgreSQL, MySQL/MariaDB, SQLite).
 
-> **Estado:** em desenvolvimento. A Fase 1 (motor e CLI) está implementada; veja o [roadmap](docs/architecture.md#15-roadmap).
+> **Estado:** em desenvolvimento. As Fases 1 (motor e CLI) e 2 (automação e bancos de dados) estão implementadas; a interface desktop é a Fase 3. Veja o [roadmap](docs/architecture.md#15-roadmap).
 
 ## Princípios
 
@@ -11,7 +11,7 @@ Backup incremental, versionado e redundante para dados críticos no Windows, com
 - Nada é considerado copiado sem verificação (SHA-256, gravação forçada em disco, troca atômica).
 - Falha silenciosa é o pior defeito: backup atrasado, disco ausente ou cheio geram alerta.
 
-## O que já funciona (Fase 1)
+## O que já funciona
 
 | Recurso | Estado |
 |---|---|
@@ -25,8 +25,17 @@ Backup incremental, versionado e redundante para dados críticos no Windows, com
 | Restauração point-in-time para pasta nova, conferida por SHA-256 | ✅ |
 | Verificação do cofre (releitura sem cache) | ✅ |
 | Configuração YAML com validação (arquivo/linha) e `config plan` em pt-BR | ✅ |
-| Agendamento (Task Scheduler), VSS, hooks, alertas, desligamento | Fase 2 |
-| Backup de bancos de dados (PostgreSQL, MySQL/MariaDB, SQLite) | Fase 2 — a configuração já é validada |
+| Backup de bancos: PostgreSQL, MySQL/MariaDB, SQLite e comando personalizado, com validação, guardas e retenção GFS | ✅ |
+| Restauração de bancos sempre em banco/arquivo novo (`restore-db`) | ✅ |
+| Cofre de segredos com DPAPI (`secret set`); senhas nunca no YAML nem na linha de comando | ✅ |
+| Hooks antes/depois, espera por dependências (`depends_on`) | ✅ |
+| Snapshot VSS da origem (requer administrador/SYSTEM) | ✅ |
+| Agendador de Tarefas como SYSTEM, tarefa de manutenção e `config apply` (requer administrador) | ✅ |
+| Estado local, alertas (backup atrasado, cofre ausente, pouco espaço, falhas) e Visualizador de Eventos | ✅ |
+| Verificação periódica com reparo a partir de outro cofre (`maintenance --scrub`) | ✅ |
+| Desligamento seguro após sucesso, com contagem regressiva e cancelamento | ✅ |
+| Trava no servidor contra dumps simultâneos (`remote.server_lock`), migração para MSVC | pendente |
+| Teste de restauração automático de dumps, Firebird e SQL Server | Fase 4 |
 | Interface desktop | Fase 3 |
 
 ## Documentação
@@ -46,10 +55,14 @@ apps/worker/    synkro-worker (CLI, executado pelo Agendador de Tarefas)
 src/            libsynkro — motor (Qt Core + Win32, sem dependência de UI)
   catalog/      catálogo e manifests do cofre (JSON Lines)
   config/       carga, validação e descrição da configuração YAML
-  core/         Result/Error, IDs de execução, versão
-  engine/       backup, diário, recuperação, guardas, retenção, restauração, verificação
+  core/         Result/Error, IDs de execução, pastas de dados, versão
+  database/     drivers de banco, dumps, zstd, SQLite, retenção GFS e restauração
+  engine/       backup, hooks, diário, recuperação, guardas, retenção, restauração, verificação
   hash/         SHA-256 via Windows CNG
-  platform/     utilitários Win32, volumes, discos físicos e travas
+  platform/     Win32: volumes, discos físicos, travas, VSS, Agendador de Tarefas, desligamento
+  process/      execução de processos em Job Object com tempo limite
+  secrets/      cofre de segredos (DPAPI)
+  state/        banco local de estado e alertas
   scan/         varredura da origem, filtros e detecção de mudanças
   transfer/     cópia segura com verificação e troca atômica
   vault/        identidade, layout, localização e checagem de cofres
@@ -80,19 +93,30 @@ synkro-worker vault check E:\ --source C:\PDV
 synkro-worker vault init  E:\ --label "HD Externo 1" --source C:\PDV
 synkro-worker vault show  E:\                      # mostra o vault_id para o synkro.yml
 
-# 2. Configurar e conferir
-synkro-worker config validate                      # C:\ProgramData\Synkro\config ou --config-dir
+# 2. Configurar e conferir (C:\ProgramData\Synkro\config, ou --config-dir / SYNKRO_CONFIG_DIR)
+synkro-worker secret set pg-pdv                    # senha do banco, digitada sem eco
+synkro-worker config validate
 synkro-worker config plan --job pdv-arquivos       # o que a tarefa vai fazer, em português
+synkro-worker config apply                         # como administrador: registra as tarefas no Agendador
 
-# 3. Executar
+# 3. Executar (o Agendador faz isso sozinho depois do apply)
+synkro-worker backup --job pdv-postgres
 synkro-worker backup --job pdv-arquivos
 synkro-worker backup --source C:\PDV --vault E:\ --job-id avulso   # sem configuração
 
-# 4. Acompanhar e recuperar
-synkro-worker runs    --vault E:\ --job pdv-arquivos
-synkro-worker verify  --vault E:\ --job pdv-arquivos
-synkro-worker restore --vault E:\ --job pdv-arquivos --to D:\Restaurado [--run r-...] [--path NFe/2026]
+# 4. Acompanhar
+synkro-worker status                               # tarefas, cofres e alertas (sai com 2 se houver crítico)
+synkro-worker maintenance --scrub                  # verificação dos cofres com reparo
+synkro-worker runs  --vault E:\ --job pdv-arquivos
+synkro-worker dumps --vault E:\ --job pdv-postgres
+
+# 5. Recuperar
+synkro-worker restore    --vault E:\ --job pdv-arquivos --to D:\Restaurado [--run r-...] [--path NFe/2026]
+synkro-worker restore-db --vault E:\ --job pdv-postgres --database pdv_vendas --target-database pdv_vendas_restaurado
+synkro-worker shutdown cancel                      # cancela um desligamento automático em contagem
 ```
+
+A pasta de dados (`C:\ProgramData\Synkro`) pode ser trocada com `SYNKRO_DATA_DIR`, e `SYNKRO_NO_SHUTDOWN=1` desativa o desligamento automático (laboratório e manutenção).
 
 Códigos de saída: `0` sucesso · `1` degradado · `2` falha · `3` bloqueado por guarda ou checagem · `4` tarefa já em execução · `64` uso incorreto.
 

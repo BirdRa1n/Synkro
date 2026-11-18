@@ -32,7 +32,7 @@ C:\ProgramData\Synkro\config\
 └── .lastgood\                 cópia da última configuração válida (gerenciada pelo Synkro)
 ```
 
-> **Estado da implementação (Fase 1):** a leitura e a validação dos YAMLs (`config validate`, `config plan`) e a execução de tarefas `files` (`backup --job`) já funcionam. O JSON Schema para autocompletar, `config apply`, `.lastgood\`, a tarefa de manutenção, o cofre de segredos (`secret set`), os hooks e o backup de bancos entram na Fase 2. Até lá, o próprio `config plan` lista o que a tarefa configurada ainda não executa.
+> **Estado da implementação:** validação (`config validate`, `config plan`), execução de tarefas `files` e `database`, `config apply` (com `.lastgood\` e registro no Agendador), a tarefa de manutenção, o cofre de segredos e os hooks já funcionam. Ainda pendentes: o JSON Schema para autocompletar em editores, a trava no servidor (`remote.server_lock`) e o teste de restauração automático (`restore_test`, Fase 4); o `config plan` avisa quando a tarefa usa algum deles. Chaves repetidas num mesmo bloco são recusadas.
 
 **Segurança:** tarefas podem executar comandos, e o worker roda como **SYSTEM**. Por isso a pasta `config\` tem ACL de escrita **apenas para Administradores e SYSTEM**. O worker **recusa** carregar qualquer arquivo de configuração que usuários comuns possam modificar e emite alerta crítico — caso contrário, qualquer usuário do PDV poderia executar comandos como SYSTEM.
 

@@ -662,7 +662,10 @@ Varredura, detecção, cópia segura, versões, catálogo/manifest/journal, recu
 
 **Saída:** testes de ida e volta e de injeção de falha passando; 500 mil arquivos processados; nenhum cenário de teste perde dados; todos os YAMLs de exemplo validam e geram `config plan` correto.
 
-### Fase 2 — Automação, consistência e bancos de dados
+### Fase 2 — Automação, consistência e bancos de dados ✅ (implementada em 2026-11-18, exceto os itens abaixo)
+
+> **Pendências da Fase 2:** migração para MSVC (esta máquina de desenvolvimento não tem Visual Studio; o projeto segue em MinGW), trava no servidor de banco (`remote.server_lock`) e a validação de campo — a semana num PDV de teste do critério de saída. VSS e o registro das tarefas como SYSTEM foram implementados, mas só podem ser exercitados com privilégio de administrador.
+
 Migração para MSVC, Task Scheduler (SYSTEM), tarefa de manutenção, `config apply`, VSS, hooks, alertas de backup atrasado e cofre ausente, desligamento seguro, `vault-check`. **Tarefas `database`:** PostgreSQL, MySQL/MariaDB, SQLite e comando personalizado; cofre de segredos DPAPI; validação e retenção GFS de dumps; `restore-db`.
 
 **Saída:** uma semana rodando num PDV de teste, com desligamentos forçados e desconexão de disco, sem intervenção manual e sem perda; testes de ida e volta de cada motor passando, inclusive com gravações concorrentes; nenhuma senha encontrada em logs ou metadados.
