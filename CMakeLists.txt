@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.22)
 project(Synkro
     VERSION 0.1.0
     DESCRIPTION "Backup incremental, versionado e redundante para dados críticos"
-    LANGUAGES CXX
+    LANGUAGES C CXX   # C: SQLite e zstd
 )
 
 if(NOT WIN32)
