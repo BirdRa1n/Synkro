@@ -5,10 +5,51 @@
 
 namespace synkro::config {
 
+namespace {
+
+Result<std::vector<VaultTarget>> resolveVaults(const ConfigSet& set, const JobConfig& job)
+{
+    std::vector<VaultTarget> out;
+    for (const auto& id : job.vaults) {
+        const VaultConfig* vc = set.global.findVault(id);
+        if (!vc)
+            return Error::make(ErrorCode::InvalidArgument, "cofre \"" + id + "\" não declarado");
+        VaultTarget target;
+        target.expectedVaultId = QString::fromStdString(vc->vaultId);
+        target.label = QString::fromStdString(vc->label);
+        if (auto located = vault::locateVault(target.expectedVaultId, vc->path))
+            target.location = located->location;
+        out.push_back(std::move(target));
+    }
+    return out;
+}
+
+HookSet convertHooks(const Hooks& hooks)
+{
+    HookSet set;
+    auto convert = [](const std::vector<HookCommand>& in, std::vector<HookSpec>& out) {
+        for (const auto& h : in) {
+            HookSpec s;
+            for (const auto& a : h.run)
+                s.args.push_back(win::fromUtf8(a));
+            s.timeoutSeconds = h.timeoutSeconds;
+            s.failOnError = h.failOnError;
+            out.push_back(std::move(s));
+        }
+    };
+    convert(hooks.before, set.before);
+    convert(hooks.after, set.after);
+    convert(hooks.onSuccess, set.onSuccess);
+    convert(hooks.onFailure, set.onFailure);
+    return set;
+}
+
+} // namespace
+
 Result<BackupRequest> makeBackupRequest(const ConfigSet& set, const JobConfig& job)
 {
     if (job.type != "files")
-        return Error::make(ErrorCode::Unsupported, "backup de banco de dados entra na Fase 2 do Synkro");
+        return Error::make(ErrorCode::InvalidArgument, "a tarefa não é do tipo files");
     if (!job.enabled)
         return Error::make(ErrorCode::InvalidArgument, "a tarefa está desativada (enabled: false)");
 
@@ -30,33 +71,36 @@ Result<BackupRequest> makeBackupRequest(const ConfigSet& set, const JobConfig& j
         req.dependsOn.push_back(win::fromUtf8(d));
     if (job.timeoutSeconds > 0)
         req.dependencyWaitSeconds = job.timeoutSeconds;
+    req.hooks = convertHooks(job.hooks);
 
-    auto convert = [](const std::vector<HookCommand>& in, std::vector<HookSpec>& out) {
-        for (const auto& h : in) {
-            HookSpec s;
-            for (const auto& a : h.run)
-                s.args.push_back(win::fromUtf8(a));
-            s.timeoutSeconds = h.timeoutSeconds;
-            s.failOnError = h.failOnError;
-            out.push_back(std::move(s));
-        }
-    };
-    convert(job.hooks.before, req.hooks.before);
-    convert(job.hooks.after, req.hooks.after);
-    convert(job.hooks.onSuccess, req.hooks.onSuccess);
-    convert(job.hooks.onFailure, req.hooks.onFailure);
+    auto vaults = resolveVaults(set, job);
+    if (!vaults)
+        return vaults.error();
+    req.vaults = std::move(vaults).value();
+    return req;
+}
 
-    for (const auto& id : job.vaults) {
-        const VaultConfig* vc = set.global.findVault(id);
-        if (!vc)
-            return Error::make(ErrorCode::InvalidArgument, "cofre \"" + id + "\" não declarado");
-        VaultTarget target;
-        target.expectedVaultId = QString::fromStdString(vc->vaultId);
-        target.label = QString::fromStdString(vc->label);
-        if (auto located = vault::locateVault(target.expectedVaultId, vc->path))
-            target.location = located->location;
-        req.vaults.push_back(std::move(target));
-    }
+Result<db::DatabaseBackupRequest> makeDatabaseBackupRequest(const ConfigSet& set, const JobConfig& job)
+{
+    if (job.type != "database")
+        return Error::make(ErrorCode::InvalidArgument, "a tarefa não é do tipo database");
+    if (!job.enabled)
+        return Error::make(ErrorCode::InvalidArgument, "a tarefa está desativada (enabled: false)");
+
+    db::DatabaseBackupRequest req;
+    req.jobId = win::fromUtf8(job.id);
+    req.job = job.database;
+    req.minVaultsOk = static_cast<std::size_t>(job.minVaultsOk);
+    req.hooks = convertHooks(job.hooks);
+    for (const auto& d : job.dependsOn)
+        req.dependsOn.push_back(win::fromUtf8(d));
+    if (job.timeoutSeconds > 0)
+        req.timeoutSeconds = job.timeoutSeconds;
+
+    auto vaults = resolveVaults(set, job);
+    if (!vaults)
+        return vaults.error();
+    req.vaults = std::move(vaults).value();
     return req;
 }
 

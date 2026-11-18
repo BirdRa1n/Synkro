@@ -101,7 +101,12 @@ Result<ProcessResult> runProcess(const ProcessSpec& spec)
     ::SetHandleInformation(outRead, HANDLE_FLAG_INHERIT, 0);
     ::SetHandleInformation(errRead, HANDLE_FLAG_INHERIT, 0);
 
-    HANDLE nulIn = ::CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, nullptr);
+    HANDLE nulIn = spec.stdinFile.empty()
+                       ? ::CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, nullptr)
+                       : ::CreateFileW(win::toExtendedPath(spec.stdinFile).c_str(), GENERIC_READ, FILE_SHARE_READ, &sa,
+                                       OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+    if (nulIn == INVALID_HANDLE_VALUE)
+        return win::lastError("abrir entrada padrão do processo");
     win::UniqueHandle hNul(nulIn);
 
     win::UniqueHandle job(::CreateJobObjectW(nullptr, nullptr));
@@ -118,7 +123,11 @@ Result<ProcessResult> runProcess(const ProcessSpec& spec)
     si.hStdOutput = outWrite;
     si.hStdError = errWrite;
 
-    std::wstring cmdLine = buildCommandLine(spec.args);
+    // O YAML aceita "C:/Programa/x.exe"; o cmd.exe, porém, interpreta as
+    // barras do próprio caminho como opções. O executável sempre usa '\'.
+    std::vector<std::wstring> args = spec.args;
+    std::replace(args.front().begin(), args.front().end(), L'/', L'\\');
+    std::wstring cmdLine = buildCommandLine(args);
     std::wstring env = buildEnvironmentBlock(spec.environment);
 
     PROCESS_INFORMATION pi{};

@@ -165,8 +165,11 @@ void describeDatabase(std::ostringstream& o, const ConfigSet& set, const JobConf
 std::vector<std::string> pendingFeatures(const JobConfig& job)
 {
     std::vector<std::string> out;
-    if (job.type == "database")
-        out.push_back("o backup de bancos de dados (a configuração é apenas validada)");
+    if (job.type == "database" && job.database.serverLock && job.database.remote)
+        out.push_back("a trava no servidor contra dumps simultâneos de outras máquinas (remote.server_lock); "
+                      "até lá, configure o dump do servidor em uma única máquina");
+    if (job.type == "database" && job.database.restoreTest)
+        out.push_back("o teste de restauração automático (restore_test, previsto para a Fase 4)");
     return out;
 }
 

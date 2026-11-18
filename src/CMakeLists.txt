@@ -25,6 +25,21 @@ add_library(synkro_core STATIC
     core/Version.h
     core/Version.cpp
 
+    database/DatabaseBackup.h
+    database/DatabaseBackup.cpp
+    database/DatabaseRestore.h
+    database/DatabaseRestore.cpp
+    database/Drivers.h
+    database/Drivers.cpp
+    database/DumpStore.h
+    database/DumpStore.cpp
+    database/Sqlite.h
+    database/Sqlite.cpp
+    database/Tools.h
+    database/Tools.cpp
+    database/Zstd.h
+    database/Zstd.cpp
+
     engine/BackupEngine.h
     engine/BackupEngine.cpp
     engine/Guards.h
@@ -88,7 +103,7 @@ add_library(Synkro::Core ALIAS synkro_core)
 target_include_directories(synkro_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(synkro_core
     PUBLIC  Qt6::Core
-    PRIVATE bcrypt crypt32 advapi32 yaml-cpp::yaml-cpp vssapi ole32 oleaut32
+    PRIVATE bcrypt crypt32 advapi32 yaml-cpp::yaml-cpp vssapi ole32 oleaut32 Synkro::SQLite3 Synkro::Zstd
 )
 target_compile_definitions(synkro_core PUBLIC
     SYNKRO_VERSION_STRING="${PROJECT_VERSION}"

@@ -6,3 +6,13 @@ synkro_add_test(tst_backupengine  tst_backupengine.cpp)
 synkro_add_test(tst_configset     tst_configset.cpp)
 synkro_add_test(tst_process       tst_process.cpp)
 synkro_add_test(tst_secrets       tst_secrets.cpp)
+
+# Ferramenta falsa que imita pg_dump/mysqldump para os testes de banco.
+add_executable(fake_dbtool ../support/fake_dbtool.cpp)
+target_compile_definitions(fake_dbtool PRIVATE UNICODE _UNICODE)
+if(MINGW)
+    target_link_options(fake_dbtool PRIVATE -static -municode)
+endif()
+synkro_add_test(tst_database tst_database.cpp)
+target_compile_definitions(tst_database PRIVATE FAKE_DBTOOL="$<TARGET_FILE:fake_dbtool>")
+add_dependencies(tst_database fake_dbtool)

@@ -528,7 +528,8 @@ const std::set<std::string>& forbiddenArgs(const std::string& engine)
     return none;
 }
 
-void checkExtraArgs(Reader& r, const YAML::Node& section, const std::string& path, const std::string& engine)
+std::vector<std::string> checkExtraArgs(Reader& r, const YAML::Node& section, const std::string& path,
+                                        const std::string& engine)
 {
     const auto args = r.strings(section, "extra_args", path);
     const auto& forbidden = forbiddenArgs(engine);
@@ -538,6 +539,7 @@ void checkExtraArgs(Reader& r, const YAML::Node& section, const std::string& pat
             r.error(section["extra_args"], join(path, "extra_args"),
                     "o parâmetro " + flag + " é controlado pelo Synkro; use os campos próprios da configuração");
     }
+    return args;
 }
 
 // ---- Tarefa: arquivos -----------------------------------------------------------
@@ -636,6 +638,10 @@ void parseDatabaseJob(Reader& r, const YAML::Node& doc, JobConfig& job)
             d.password = r.secret(c, "password", "connection");
             d.remote = !d.host.empty() && !isLocalHost(d.host);
             d.allowInsecure = r.boolean(c, "allow_insecure", "connection").value_or(false);
+            if (auto ca = r.str(c, "ssl_ca", "connection")) {
+                d.sslCa = w(*ca);
+                std::replace(d.sslCa.begin(), d.sslCa.end(), L'/', L'\\');
+            }
             if (auto t = r.duration(c, "connect_timeout", "connection"))
                 d.connectTimeoutSeconds = *t;
             if (auto n = r.integer(c, "retries", "connection", 0, 20))
@@ -712,6 +718,9 @@ void parseDatabaseJob(Reader& r, const YAML::Node& doc, JobConfig& job)
     if (d.engine == "postgresql" && pgSec && r.requireMap(pgSec, "postgresql")) {
         r.checkKeys(pgSec, "postgresql", {"format", "compress", "include_globals", "jobs", "extra_args"});
         const std::string format = r.oneOf(pgSec, "format", "postgresql", {"custom", "plain", "directory"}).value_or("custom");
+        if (format == "directory")
+            r.error(pgSec["format"], "postgresql.format",
+                    "o formato directory ainda não é suportado; use custom (recomendado) ou plain");
         d.options["format"] = format;
         if (auto n = r.integer(pgSec, "compress", "postgresql", 0, 9))
             d.options["compress"] = std::to_string(*n);
@@ -722,7 +731,7 @@ void parseDatabaseJob(Reader& r, const YAML::Node& doc, JobConfig& job)
                 r.error(pgSec["jobs"], "postgresql.jobs", "jobs > 1 exige format: directory");
             d.options["jobs"] = std::to_string(*n);
         }
-        checkExtraArgs(r, pgSec, "postgresql", d.engine);
+        d.extraArgs = checkExtraArgs(r, pgSec, "postgresql", d.engine);
     }
     if ((d.engine == "mysql" || d.engine == "mariadb") && mySec && r.requireMap(mySec, "mysql")) {
         r.checkKeys(mySec, "mysql", {"single_transaction", "routines", "triggers", "events", "myisam_strategy",
@@ -739,7 +748,7 @@ void parseDatabaseJob(Reader& r, const YAML::Node& doc, JobConfig& job)
             d.options["compression"] = *s;
         if (auto n = r.integer(mySec, "compression_level", "mysql", 1, 19))
             d.options["compression_level"] = std::to_string(*n);
-        checkExtraArgs(r, mySec, "mysql", d.engine);
+        d.extraArgs = checkExtraArgs(r, mySec, "mysql", d.engine);
     }
     if (d.engine == "sqlite") {
         if (!liteSec) {

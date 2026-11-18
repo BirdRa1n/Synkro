@@ -23,6 +23,10 @@ struct ProcessSpec {
 
     std::int64_t timeoutMs = 0; // 0 = sem limite
 
+    // Arquivo entregue como entrada padrão (ex.: restauração com o cliente
+    // mysql). Vazio = NUL.
+    std::wstring stdinFile;
+
     // Se definido, recebe a saída padrão em blocos, sem acumular (dumps).
     // Uma falha interrompe o processo.
     std::function<Status(const char* data, std::size_t size)> onStdout;

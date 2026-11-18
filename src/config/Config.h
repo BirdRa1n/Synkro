@@ -129,6 +129,7 @@ struct DatabaseJob {
     std::string user;
     SecretRef password;
     std::string sslMode;
+    std::wstring sslCa;
     bool remote = false;
     bool allowInsecure = false;
     std::int64_t connectTimeoutSeconds = 15;
@@ -143,6 +144,7 @@ struct DatabaseJob {
     std::map<std::string, SecretRef> customEnv;
     std::vector<int> successExitCodes{0};
     std::map<std::string, std::wstring> tools; // ferramenta -> caminho explícito
+    std::vector<std::string> extraArgs;
     std::string staging = "local";
     bool serverLock = false;
     // Retenção GFS

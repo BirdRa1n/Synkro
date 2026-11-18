@@ -94,7 +94,11 @@ struct BackupResult {
     std::vector<HookOutcome> hooks;
     bool snapshotUsed = false;
     std::string snapshotNote;     // por que o snapshot não foi usado, quando pedido
+    std::vector<std::string> warnings; // avisos que não mudam o status (ex.: tabelas MyISAM)
 };
+
+// Status do run a partir dos cofres, conforme min_vaults_ok (0 = todos).
+RunStatus aggregateRunStatus(const std::vector<VaultRunResult>& vaults, std::size_t minVaultsOk);
 
 // Executa um backup de arquivos (architecture.md §6): trava a tarefa, varre a
 // origem uma única vez e aplica as mudanças em cada cofre, de forma

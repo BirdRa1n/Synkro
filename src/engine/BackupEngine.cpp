@@ -322,7 +322,9 @@ private:
     VaultRunResult m_result;
 };
 
-RunStatus aggregate(const std::vector<VaultRunResult>& vaults, std::size_t minOk)
+} // namespace
+
+RunStatus aggregateRunStatus(const std::vector<VaultRunResult>& vaults, std::size_t minOk)
 {
     std::size_t ok = 0;
     bool anyBlocked = false, anyPartial = false;
@@ -345,8 +347,6 @@ RunStatus aggregate(const std::vector<VaultRunResult>& vaults, std::size_t minOk
         return RunStatus::Success;
     return RunStatus::Degraded;
 }
-
-} // namespace
 
 BackupResult runBackup(const BackupRequest& req)
 {
@@ -462,7 +462,7 @@ BackupResult runBackup(const BackupRequest& req)
             req.progress({ProgressKind::VaultFinished, target.location, {}, 0, 0});
     }
 
-    result.status = aggregate(result.vaults, req.minVaultsOk);
+    result.status = aggregateRunStatus(result.vaults, req.minVaultsOk);
     snapshot.reset(); // libera o snapshot antes dos comandos "after"
     finishHooks(result);
     return result;
