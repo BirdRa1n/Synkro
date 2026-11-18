@@ -13,10 +13,31 @@ add_library(synkro_core STATIC
     core/Version.h
     core/Version.cpp
 
+    engine/BackupEngine.h
+    engine/BackupEngine.cpp
+    engine/Guards.h
+    engine/Guards.cpp
+    engine/Journal.h
+    engine/Journal.cpp
+    engine/Recovery.h
+    engine/Recovery.cpp
+    engine/Restore.h
+    engine/Restore.cpp
+    engine/Retention.h
+    engine/Retention.cpp
+    engine/RunSummary.h
+    engine/RunSummary.cpp
+    engine/VaultOps.h
+    engine/VaultOps.cpp
+    engine/Verify.h
+    engine/Verify.cpp
+
     hash/Sha256.h
     hash/Sha256.cpp
 
     platform/windows/AlignedBuffer.h
+    platform/windows/Locks.h
+    platform/windows/Locks.cpp
     platform/windows/Win32.h
     platform/windows/Win32.cpp
     platform/windows/Volume.h
@@ -26,6 +47,8 @@ add_library(synkro_core STATIC
     scan/ChangeDetector.cpp
     scan/FileScanner.h
     scan/FileScanner.cpp
+    scan/PathFilter.h
+    scan/PathFilter.cpp
 
     transfer/SafeCopy.h
     transfer/SafeCopy.cpp
