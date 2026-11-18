@@ -1,0 +1,57 @@
+# Tarefa de arquivos — exemplo completo (docs/configuration.md §6).
+version: 1
+id: pdv-arquivos
+name: "Arquivos do PDV (XML fiscais e configuração)"
+type: files
+group: noite
+enabled: true
+
+source: "C:/PDV"
+include:
+  - "XML/**"
+  - "NFe/**"
+  - "Config/**"
+exclude:
+  - "**/*.tmp"
+  - "**/~$*"
+  - "Logs/**"
+
+vaults: [hd-externo-1, hd-interno-2]
+min_vaults_ok: 1                      # sucesso com pelo menos 1 cofre
+
+schedule:
+  - weekly: { days: [mon, tue, wed, thu, fri, sat], at: "22:30" }
+  - on_startup: { delay: 10m }
+depends_on: [pdv-postgres]
+depends_mode: always
+
+consistency:
+  snapshot: vss
+  on_snapshot_failure: continue
+
+change_detection:
+  full_hash_every: 30
+
+verify: hash_on_copy
+
+retention:
+  keep_versions: 90d
+  keep_min_versions: 3
+  keep_deleted: 180d
+
+guards:
+  max_deleted: 20%
+  max_modified: 50%
+  sentinel_file: "Config/pdv.ini"
+
+hooks:
+  before:
+    - run: ["C:/PDV/bin/fechar-caixa.exe", "--silencioso"]
+      timeout: 5m
+      on_error: fail
+  after:
+    - run: ["C:/PDV/bin/abrir-caixa.exe"]
+      on_error: warn
+
+shutdown_after: false
+timeout: 6h

@@ -1,0 +1,22 @@
+# Comando personalizado — exemplo (docs/configuration.md §7.4).
+version: 1
+id: erp-exportacao
+name: "Exportação do ERP do fornecedor"
+type: database
+
+engine: custom
+custom:
+  command: ["C:/ERP/bin/backup.exe", "/saida:{output}", "/silencioso"]
+  output: file
+  output_name: "erp.bak"
+  success_exit_codes: [0]
+  env:
+    ERP_SENHA: { secret: erp-admin }
+  validate:
+    command: ["C:/ERP/bin/backup.exe", "/verificar:{output}"]
+  restore:
+    command: ["C:/ERP/bin/backup.exe", "/restaurar:{input}", "/destino:{target}"]
+  compression: zstd
+
+schedule:
+  - daily: "21:45"

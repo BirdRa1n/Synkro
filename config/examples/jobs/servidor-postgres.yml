@@ -1,0 +1,36 @@
+# PostgreSQL em outro servidor — exemplo (docs/configuration.md §7.5).
+version: 1
+id: servidor-postgres
+name: "Banco central (PostgreSQL no servidor)"
+type: database
+group: noite
+
+engine: postgresql
+connection:
+  host: 192.168.0.10
+  port: 5432
+  user: synkro_backup
+  password: { secret: pg-servidor }
+  sslmode: verify-full
+  ssl_ca: "C:/ProgramData/Synkro/certs/srv-banco-ca.pem"
+  connect_timeout: 30s
+  retries: 5
+dump_retries: 1
+
+databases: all
+
+remote:
+  server_lock: true
+
+schedule:
+  - daily: "23:00"
+timeout: 4h
+
+restore_test:
+  enabled: true
+  schedule: { weekly: { days: [sun], at: "05:00" } }
+  connection:
+    host: localhost
+    port: 5432
+    user: synkro_verify
+    password: { secret: pg-teste-local }

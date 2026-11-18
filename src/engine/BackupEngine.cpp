@@ -64,6 +64,12 @@ public:
 private:
     Status execute()
     {
+        if (m_target.location.empty()) {
+            m_result.vaultId = m_target.expectedVaultId;
+            return Error::make(ErrorCode::DeviceNotReady,
+                               "o cofre \"" + m_target.label.toStdString() + "\" não está conectado");
+        }
+
         // Identidade: nunca gravar num disco que não seja o cofre esperado.
         auto identity = vault::readIdentity(m_target.location);
         if (!identity)

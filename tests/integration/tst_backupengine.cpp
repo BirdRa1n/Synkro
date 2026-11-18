@@ -70,7 +70,7 @@ struct Env {
         if (vaults.empty())
             vaults = {vaultA};
         for (auto& v : vaults)
-            r.vaults.push_back({v, {}});
+            r.vaults.push_back({v, {}, {}});
         r.applyRetention = false;
         return r;
     }

@@ -7,6 +7,16 @@ add_library(synkro_core STATIC
     catalog/Manifest.h
     catalog/Manifest.cpp
 
+    config/Config.h
+    config/ConfigLoader.h
+    config/ConfigLoader.cpp
+    config/JobRequest.h
+    config/JobRequest.cpp
+    config/PlanDescriber.h
+    config/PlanDescriber.cpp
+    config/Values.h
+    config/Values.cpp
+
     core/Result.h
     core/RunId.h
     core/RunId.cpp
@@ -58,13 +68,15 @@ add_library(synkro_core STATIC
     vault/Vault.cpp
     vault/VaultCandidateCheck.h
     vault/VaultCandidateCheck.cpp
+    vault/VaultLocator.h
+    vault/VaultLocator.cpp
 )
 add_library(Synkro::Core ALIAS synkro_core)
 
 target_include_directories(synkro_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(synkro_core
     PUBLIC  Qt6::Core
-    PRIVATE bcrypt
+    PRIVATE bcrypt yaml-cpp::yaml-cpp
 )
 target_compile_definitions(synkro_core PUBLIC
     SYNKRO_VERSION_STRING="${PROJECT_VERSION}"

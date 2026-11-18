@@ -5,6 +5,7 @@ function(synkro_add_test name)
     set_target_properties(${name} PROPERTIES WIN32_EXECUTABLE FALSE)
     target_include_directories(${name} PRIVATE "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/support")
     target_link_libraries(${name} PRIVATE Synkro::Core Qt6::Test)
+    target_compile_definitions(${name} PRIVATE SYNKRO_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
     synkro_configure_target(${name})
     add_test(NAME ${name} COMMAND ${name})
     # As DLLs do Qt precisam estar no PATH para o teste rodar fora do Qt Creator.

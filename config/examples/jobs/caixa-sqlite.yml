@@ -1,0 +1,21 @@
+# SQLite — exemplo (docs/configuration.md §7.3).
+version: 1
+id: caixa-sqlite
+name: "Bancos locais do caixa (SQLite)"
+type: database
+
+engine: sqlite
+sqlite:
+  files:
+    - "C:/PDV/dados/caixa.db"
+    - "C:/PDV/dados/cache/*.db"
+  integrity_check: true
+  compression: zstd
+  busy_timeout: 30s
+
+schedule:
+  - every: 2h
+    between: ["08:00", "22:00"]
+retention:
+  keep_last: 24
+  keep_daily: 30
