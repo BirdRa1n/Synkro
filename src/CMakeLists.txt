@@ -12,6 +12,8 @@ add_library(synkro_core STATIC
     config/ConfigApply.cpp
     config/ConfigLoader.h
     config/ConfigLoader.cpp
+    config/ConfigWriter.h
+    config/ConfigWriter.cpp
     config/ShutdownPolicy.h
     config/ShutdownPolicy.cpp
     config/JobRequest.h
