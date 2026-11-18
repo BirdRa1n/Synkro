@@ -657,7 +657,7 @@ synkro/
 
 Cada fase tem **critério de saída**; nenhuma avança sem cumpri-lo.
 
-### Fase 1 — Motor e CLI
+### Fase 1 — Motor e CLI ✅ (implementada em 2026-11-18)
 Varredura, detecção, cópia segura, versões, catálogo/manifest/journal, recuperação de falhas, guardas, retenção, **restauração via CLI**, lock por tarefa, cofres com identidade (`vault.json`) e checagens da seção 3.1, múltiplos cofres por tarefa. **Configuração YAML** (carga, JSON Schema, regras de negócio, `config validate` e `config plan`).
 
 **Saída:** testes de ida e volta e de injeção de falha passando; 500 mil arquivos processados; nenhum cenário de teste perde dados; todos os YAMLs de exemplo validam e geram `config plan` correto.

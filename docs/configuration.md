@@ -32,6 +32,8 @@ C:\ProgramData\Synkro\config\
 └── .lastgood\                 cópia da última configuração válida (gerenciada pelo Synkro)
 ```
 
+> **Estado da implementação (Fase 1):** a leitura e a validação dos YAMLs (`config validate`, `config plan`) e a execução de tarefas `files` (`backup --job`) já funcionam. O JSON Schema para autocompletar, `config apply`, `.lastgood\`, a tarefa de manutenção, o cofre de segredos (`secret set`), os hooks e o backup de bancos entram na Fase 2. Até lá, o próprio `config plan` lista o que a tarefa configurada ainda não executa.
+
 **Segurança:** tarefas podem executar comandos, e o worker roda como **SYSTEM**. Por isso a pasta `config\` tem ACL de escrita **apenas para Administradores e SYSTEM**. O worker **recusa** carregar qualquer arquivo de configuração que usuários comuns possam modificar e emite alerta crítico — caso contrário, qualquer usuário do PDV poderia executar comandos como SYSTEM.
 
 ---
@@ -115,6 +117,8 @@ vaults:
     label: "HD Interno 2 (WD 1 TB)"
     rotation: false
     max_absence: 1d
+    path: "F:/"                       # opcional: onde procurar primeiro. Se o disco mudar de
+                                      # letra, o Synkro o encontra pelo vault_id em qualquer volume
 
 defaults:                             # valem para todas as tarefas, salvo se a tarefa sobrescrever
   vaults: [hd-externo-1, hd-interno-2]

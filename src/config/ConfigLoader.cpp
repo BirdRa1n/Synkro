@@ -1070,6 +1070,7 @@ void parseJobImpl(Reader& r, const std::optional<YAML::Node>& doc, const GlobalC
             r.hookList(h, "after", "hooks", job.hooks.after);
             r.hookList(h, "on_success", "hooks", job.hooks.onSuccess);
             r.hookList(h, "on_failure", "hooks", job.hooks.onFailure);
+            r.warn(h, "hooks", "comandos antes/depois ainda não são executados nesta versão (Fase 2)");
         }
     }
 
@@ -1202,6 +1203,10 @@ void checkPhysicalDisks(ConfigSet& set)
         if (v.vaultId.empty())
             continue;
         located[v.id] = vault::locateVault(QString::fromStdString(v.vaultId), v.path);
+        if (!located[v.id])
+            set.diagnostics.push_back({Severity::Warning, L"synkro.yml", 0, 0, "vaults." + v.id,
+                                       "cofre \"" + v.label + "\" não está conectado agora; a checagem de disco "
+                                       "físico será feita na execução"});
     }
 
     for (const auto& j : set.jobs) {
@@ -1210,12 +1215,8 @@ void checkPhysicalDisks(ConfigSet& set)
             const auto it = located.find(vid);
             if (it == located.end())
                 continue;
-            if (!it->second) {
-                set.diagnostics.push_back({Severity::Warning, j.file, j.line, 1, "vaults",
-                                           "cofre \"" + vid + "\" não está conectado agora; a checagem de disco físico "
-                                           "será feita na execução"});
-                continue;
-            }
+            if (!it->second)
+                continue; // já avisado uma vez, em synkro.yml
             vaultDisks.emplace_back(vid, physicalDisksOf(it->second->location));
         }
 

@@ -249,6 +249,7 @@ engine: firebird
         opt.checkPhysicalDisks = false;
         const ConfigSet set = loadConfig(QStringLiteral(SYNKRO_SOURCE_DIR "/config/examples").replace('/', '\\').toStdWString(), opt);
         QVERIFY2(!set.hasErrors(), qPrintable(dump(set.diagnostics)));
+        QCOMPARE(set.warningCount(), size_t(1)); // apenas o aviso de hooks da Fase 2
         QCOMPARE(set.jobs.size(), size_t(6));
         QCOMPARE(set.global.vaults.size(), size_t(2));
 
@@ -279,6 +280,10 @@ engine: firebird
         QVERIFY(plan.contains(QStringLiteral("Sucesso exige 1 de 2 cofres.")));
         QVERIFY(plan.contains(QStringLiteral("versions/")));
         QVERIFY(plan.contains(QStringLiteral("Config/pdv.ini")));
+        // O plano não pode prometer o que esta versão ainda não faz.
+        QVERIFY(plan.contains(QStringLiteral("AINDA NÃO DISPONÍVEL NESTA VERSÃO")));
+        QVERIFY(plan.contains(QStringLiteral("snapshot VSS")));
+        QVERIFY(plan.contains(QStringLiteral("hooks")));
 
         const JobConfig* pg = set.findJob("pdv-postgres");
         const QString pgPlan = QString::fromStdString(describeJob(set, *pg));

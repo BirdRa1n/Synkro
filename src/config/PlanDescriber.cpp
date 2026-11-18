@@ -157,9 +157,33 @@ void describeDatabase(std::ostringstream& o, const ConfigSet& set, const JobConf
       << ".\n";
     o << "  • Dump menor que " << describePercent(d.minSizeRatio)
       << " do anterior: alerta crítico e nenhum dump antigo é apagado.\n";
-    o << "\nOBSERVAÇÃO\n  • O backup de bancos de dados entra em funcionamento na Fase 2 do Synkro; nesta versão a "
-         "configuração é apenas validada.\n";
 }
+
+// Recursos configurados que esta versão ainda não executa. O plano precisa
+// deixar isso explícito: o usuário não pode supor uma proteção que não existe.
+std::vector<std::string> pendingFeatures(const JobConfig& job)
+{
+    std::vector<std::string> out;
+    if (job.type == "database")
+        out.push_back("o backup de bancos de dados (a configuração é apenas validada)");
+    if (!job.schedule.empty())
+        out.push_back("o agendamento automático pelo Agendador de Tarefas (execute com synkro-worker backup)");
+    if (!job.dependsOn.empty())
+        out.push_back("a ordem automática entre tarefas (depends_on)");
+    if (job.type == "files" && job.files.vss)
+        out.push_back("o snapshot VSS (a cópia é direta; arquivos alterados durante a cópia são descartados e "
+                      "tentados de novo na próxima execução)");
+    if (!job.hooks.before.empty() || !job.hooks.after.empty() || !job.hooks.onSuccess.empty()
+        || !job.hooks.onFailure.empty())
+        out.push_back("os comandos antes/depois (hooks)");
+    if (job.shutdownAfter)
+        out.push_back("o desligamento automático");
+    return out;
+}
+
+} // namespace
+
+namespace {
 
 } // namespace
 
@@ -222,6 +246,13 @@ std::string describeJob(const ConfigSet& set, const JobConfig& job)
         if (job.shutdownAfter)
             o << "  • Desligar o computador após " << describeDuration(set.global.shutdownCountdownSeconds)
               << " de aviso, somente se tudo terminar com sucesso.\n";
+    }
+
+    const auto pending = pendingFeatures(job);
+    if (!pending.empty()) {
+        o << "\nAINDA NÃO DISPONÍVEL NESTA VERSÃO (previsto para a Fase 2)\n";
+        for (const auto& p : pending)
+            o << "  • " << p << "\n";
     }
     return o.str();
 }
