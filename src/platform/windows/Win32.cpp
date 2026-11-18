@@ -1,5 +1,6 @@
 #include "platform/windows/Win32.h"
 
+#include <algorithm>
 #include <vector>
 
 namespace synkro::win {
@@ -147,6 +148,137 @@ std::wstring foldCase(std::wstring_view path)
     std::wstring out(path);
     if (!out.empty())
         ::CharUpperBuffW(out.data(), static_cast<DWORD>(out.size()));
+    return out;
+}
+
+std::wstring parentPath(std::wstring_view path)
+{
+    std::wstring_view p = path;
+    while (!p.empty() && (p.back() == L'\\' || p.back() == L'/'))
+        p.remove_suffix(1);
+    const size_t pos = p.find_last_of(L"\\/");
+    if (pos == std::wstring_view::npos)
+        return {};
+    return std::wstring(p.substr(0, pos));
+}
+
+// Tamanho do prefixo que não deve ser criado: "C:\" ou "\\servidor\share\".
+static size_t rootLength(const std::wstring& p)
+{
+    if (p.size() >= 2 && p[1] == L':')
+        return p.size() >= 3 ? 3 : 2;
+    if (p.rfind(L"\\\\", 0) == 0) {
+        const size_t server = p.find(L'\\', 2);
+        if (server == std::wstring::npos)
+            return p.size();
+        const size_t share = p.find(L'\\', server + 1);
+        return share == std::wstring::npos ? p.size() : share + 1;
+    }
+    return 0;
+}
+
+Status createDirectories(std::wstring_view path)
+{
+    std::wstring p(path);
+    for (auto& ch : p) {
+        if (ch == L'/')
+            ch = L'\\';
+    }
+    if (p.rfind(L"\\\\?\\UNC\\", 0) == 0)
+        p = L"\\\\" + p.substr(8);
+    else if (p.rfind(L"\\\\?\\", 0) == 0)
+        p = p.substr(4);
+    while (!p.empty() && p.back() == L'\\')
+        p.pop_back();
+    if (p.empty())
+        return Error::make(ErrorCode::InvalidArgument, "caminho de diretório vazio");
+
+    size_t pos = rootLength(p);
+    while (pos < p.size()) {
+        size_t next = p.find(L'\\', pos);
+        if (next == std::wstring::npos)
+            next = p.size();
+        const std::wstring partial = p.substr(0, next);
+        if (!::CreateDirectoryW(toExtendedPath(partial).c_str(), nullptr)) {
+            const DWORD err = ::GetLastError();
+            if (err != ERROR_ALREADY_EXISTS)
+                return errorFromWin32(err, "criar diretório");
+            const DWORD attrs = ::GetFileAttributesW(toExtendedPath(partial).c_str());
+            if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0)
+                return Error::make(ErrorCode::AlreadyExists, "já existe um arquivo com o nome do diretório");
+        }
+        pos = next + 1;
+    }
+    return Status::success();
+}
+
+Status writeFileAtomically(std::wstring_view path, std::string_view data)
+{
+    const std::wstring target(path);
+    const std::wstring temp = target + L".tmp-" + std::to_wstring(::GetCurrentProcessId()) + L"-"
+                              + std::to_wstring(::GetTickCount64());
+
+    {
+        UniqueHandle h(::CreateFileW(toExtendedPath(temp).c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                                     FILE_ATTRIBUTE_NORMAL, nullptr));
+        if (!h)
+            return lastError("criar arquivo temporário");
+
+        size_t offset = 0;
+        while (offset < data.size()) {
+            const DWORD chunk = static_cast<DWORD>(std::min<size_t>(data.size() - offset, 1u << 20));
+            DWORD written = 0;
+            if (!::WriteFile(h.get(), data.data() + offset, chunk, &written, nullptr) || written == 0) {
+                Error e = lastError("gravar arquivo temporário");
+                h.reset();
+                ::DeleteFileW(toExtendedPath(temp).c_str());
+                return e;
+            }
+            offset += written;
+        }
+        if (!::FlushFileBuffers(h.get())) {
+            Error e = lastError("sincronizar arquivo temporário");
+            h.reset();
+            ::DeleteFileW(toExtendedPath(temp).c_str());
+            return e;
+        }
+    }
+
+    if (!::MoveFileExW(toExtendedPath(temp).c_str(), toExtendedPath(target).c_str(),
+                       MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        Error e = lastError("substituir arquivo");
+        ::DeleteFileW(toExtendedPath(temp).c_str());
+        return e;
+    }
+    return Status::success();
+}
+
+Result<std::string> readWholeFile(std::wstring_view path, std::size_t maxBytes)
+{
+    UniqueHandle h(::CreateFileW(toExtendedPath(path).c_str(), GENERIC_READ,
+                                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+                                 FILE_FLAG_SEQUENTIAL_SCAN, nullptr));
+    if (!h)
+        return lastError("abrir arquivo");
+
+    LARGE_INTEGER size{};
+    if (!::GetFileSizeEx(h.get(), &size))
+        return lastError("obter tamanho do arquivo");
+    if (static_cast<unsigned long long>(size.QuadPart) > maxBytes)
+        return Error::make(ErrorCode::InvalidArgument, "arquivo maior que o limite permitido");
+
+    std::string out(static_cast<size_t>(size.QuadPart), '\0');
+    size_t offset = 0;
+    while (offset < out.size()) {
+        DWORD read = 0;
+        const DWORD chunk = static_cast<DWORD>(std::min<size_t>(out.size() - offset, 1u << 20));
+        if (!::ReadFile(h.get(), out.data() + offset, chunk, &read, nullptr))
+            return lastError("ler arquivo");
+        if (read == 0)
+            break;
+        offset += read;
+    }
+    out.resize(offset);
     return out;
 }
 

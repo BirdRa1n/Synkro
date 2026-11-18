@@ -49,6 +49,24 @@ std::wstring fromCatalogPath(std::wstring_view catalogPath);
 // equivalente à regra do NTFS (maiúsculas ordinais).
 std::wstring foldCase(std::wstring_view path);
 
+// Diretório pai ("C:\a\b.txt" -> "C:\a"). Vazio se não houver separador.
+std::wstring parentPath(std::wstring_view path);
+
+// Cria o diretório e todos os pais que faltarem (como mkdir -p). Aceita
+// caminhos locais ("C:\...") e UNC ("\\servidor\share\...").
+Status createDirectories(std::wstring_view path);
+
+// ---- Arquivos ----------------------------------------------------------------
+
+// Grava `data` em `path` de forma atômica: escreve num temporário ao lado,
+// força a gravação em disco (FlushFileBuffers) e renomeia por cima do destino
+// com MoveFileExW(REPLACE_EXISTING | WRITE_THROUGH). Um leitor nunca vê o
+// arquivo pela metade.
+Status writeFileAtomically(std::wstring_view path, std::string_view data);
+
+// Lê o arquivo inteiro (destinado a arquivos pequenos de metadados).
+Result<std::string> readWholeFile(std::wstring_view path, std::size_t maxBytes = 64u << 20);
+
 // ---- Handle RAII -------------------------------------------------------------
 
 class UniqueHandle {

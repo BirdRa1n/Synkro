@@ -17,6 +17,9 @@ add_library(synkro_core STATIC
     scan/ChangeDetector.cpp
     scan/FileScanner.h
     scan/FileScanner.cpp
+
+    transfer/SafeCopy.h
+    transfer/SafeCopy.cpp
 )
 add_library(Synkro::Core ALIAS synkro_core)
 
