@@ -617,3 +617,5 @@ synkro-worker config import --from pdv-matriz.yml --bind hd-externo-1=E: --bind 
 6. lista os segredos que faltam (`synkro-worker secret set <nome>`) e lembra de aplicar com `config apply` (a tarefa de manutenção também aplica sozinha em até 15 minutos).
 
 `--dry-run` faz tudo até a validação e mostra o que seria gravado, sem gravar.
+
+No desktop: **Configurações → Exportar…** e **Configurações → Importar…**. A importação mostra um seletor de disco para cada cofre do pacote (os cofres do Synkro conectados, sugerindo o de mesmo nome), simula sem administrador e grava pelo worker elevado (UAC) só depois de uma simulação válida.

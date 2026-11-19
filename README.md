@@ -1,8 +1,8 @@
 # Synkro
 
-Backup incremental, versionado e redundante para dados críticos no Windows, com foco em sistemas PDV: arquivos fiscais, configurações e bancos de dados (PostgreSQL, MySQL/MariaDB, SQLite).
+Backup incremental, versionado e redundante para dados críticos no Windows, com foco em sistemas PDV: arquivos fiscais, configurações e bancos de dados (PostgreSQL, MySQL/MariaDB, Firebird, SQL Server, SQLite).
 
-> **Estado:** em desenvolvimento. As Fases 1 (motor e CLI), 2 (automação e bancos de dados) e 3 (interface desktop) estão implementadas; a Fase 4 é robustez de campo e instalador. Veja o [roadmap](docs/architecture.md#15-roadmap).
+> **Estado:** as Fases 1 (motor e CLI), 2 (automação e bancos de dados), 3 (interface desktop) e 4 (robustez de campo e instalação) estão implementadas. Faltam o instalador MSI assinado, a migração para MSVC e a validação em campo (PDVs e servidores de banco reais). Veja o [roadmap](docs/architecture.md#15-roadmap).
 
 ## Princípios
 
@@ -38,11 +38,14 @@ Backup incremental, versionado e redundante para dados críticos no Windows, com
 | Trava no servidor contra dumps simultâneos de várias máquinas (`remote.server_lock`) | ✅ |
 | Teste de restauração automático em banco temporário, com verificações SQL (`restore_test`, `restore-test`) | ✅ |
 | Firebird (`gbak`) e SQL Server (`BACKUP ... COPY_ONLY, CHECKSUM`), com restauração e teste de restauração | ✅ |
-| Exportar/importar a configuração entre PDVs, sem senhas nem identidade dos discos (`config export` / `config import`) | ✅ |
+| Exportar/importar a configuração entre PDVs, sem senhas nem identidade dos discos (desktop e `config export` / `config import`) | ✅ |
 | Migração para MSVC | pendente |
 | Interface desktop: painel, tarefas, cofres, histórico, restauração e configurações; tema claro/escuro/sistema; bandeja com alertas | ✅ |
 | Assistente de tarefas com teste de conexão, editor YAML com validação ao vivo, cadastro de discos com checagem | ✅ |
-| Instalador MSI assinado e início automático na bandeja | Fase 4 |
+| Pacote de instalação (`installer\package.ps1` + `install.ps1`): permissões, Visualizador de Eventos, menu Iniciar, Programas e Recursos | ✅ |
+| Início automático na bandeja (instalador para todos os usuários; opção por usuário em Configurações) | ✅ |
+| Teste de estresse (~100 mil arquivos, `SYNKRO_STRESS=1`) | ✅ |
+| Instalador MSI assinado (depende do WiX e de um certificado de assinatura de código) | pendente |
 
 ## Documentação
 
@@ -51,6 +54,7 @@ Backup incremental, versionado e redundante para dados críticos no Windows, com
 | [docs/architecture.md](docs/architecture.md) | Arquitetura, cofres, fluxo de backup, recuperação de falhas, roadmap |
 | [docs/database-backup.md](docs/database-backup.md) | Backup consistente de bancos de dados |
 | [docs/configuration.md](docs/configuration.md) | Configuração em YAML |
+| [docs/operations.md](docs/operations.md) | Guia de operação: instalação, permissões, alertas, restauração, troca de disco |
 | [config/examples/](config/examples) | YAMLs de exemplo (validados pelos testes) |
 
 ## Estrutura
@@ -78,7 +82,9 @@ tests/          Qt Test (unit/ e integration/), integrados ao CTest
 
 ## Compilação
 
-Requisitos: Windows 10/11, CMake ≥ 3.22, Ninja, Qt 6.5+ (kit MinGW 64-bit nesta fase; a migração para MSVC está prevista antes da Fase 2) e **git no PATH** (o configure baixa o yaml-cpp 0.8.0 com FetchContent).
+Requisitos: Windows 10/11, CMake ≥ 3.22, Ninja, Qt 6.5+ (kit MinGW 64-bit; a migração para MSVC está pendente) e **git no PATH** (o configure baixa o yaml-cpp 0.8.0 com FetchContent).
+
+Pacote de instalação (Release + windeployqt + scripts): `powershell -ExecutionPolicy Bypass -File installer\package.ps1` — ver [operations.md §1](docs/operations.md#1-instalação).
 
 ```powershell
 $env:SYNKRO_QT_DIR = "C:/Qt/6.12.0/mingw_64"
@@ -128,6 +134,11 @@ synkro-worker dumps --vault E:\ --job pdv-postgres
 # 5. Recuperar
 synkro-worker restore    --vault E:\ --job pdv-arquivos --to D:\Restaurado [--run r-...] [--path NFe/2026]
 synkro-worker restore-db --vault E:\ --job pdv-postgres --database pdv_vendas --target-database pdv_vendas_restaurado
+synkro-worker restore-test --job pdv-postgres              # restaura num banco temporário, confere e apaga
+
+# 6. Levar a configuração para outro PDV (sem senhas e sem a identidade dos discos)
+synkro-worker config export --to pdv-matriz.yml
+synkro-worker config import --from pdv-matriz.yml --bind hd-externo-1=E: --bind hd-interno-2=F:
 synkro-worker shutdown cancel                      # cancela um desligamento automático em contagem
 ```
 

@@ -220,7 +220,7 @@ Uma linha JSON por arquivo, legível em qualquer editor:
 
 ## 5. Banco local (SQLite)
 
-Local: `C:\ProgramData\Synkro\synkro.db` (ACL: SYSTEM e Administradores com escrita; Usuários com leitura).
+Local: `C:\ProgramData\Synkro\state\synkro.db`. A pasta `state\` é a única de `ProgramData\Synkro` em que Usuários podem gravar: o desktop roda como usuário comum e atualiza alertas, e o modo WAL do SQLite cria arquivos ao lado do banco. Configuração, segredos e preparo continuam sem escrita para Usuários (ver [operations.md](operations.md#permissões)). O conteúdo é cache: os cofres são a fonte da verdade.
 
 Função: **estado de execução + cache + histórico**. A configuração vem dos arquivos YAML ([configuration.md](configuration.md)); as tabelas `vaults`, `jobs` e `job_vaults` abaixo são um **espelho** recriado a cada `config apply`, usado para consultas do desktop e chaves do histórico. O inventário por cofre pode ser reconstruído a partir do `catalog.jsonl` / `dumps.jsonl` de cada cofre (comando `synkro-worker rebuild-cache`).
 
@@ -391,7 +391,7 @@ Somente após o passo 9 o arquivo conta como copiado. O padrão de `verify_mode`
 
 Em ordem de preferência:
 
-1. **Tarefa do tipo `database`** ([database-backup.md](database-backup.md)) — dump consistente gerado pelo próprio banco (PostgreSQL, MySQL/MariaDB, SQLite; Firebird e SQL Server na Fase 4; ou comando personalizado). É o único método que garante consistência transacional. Em tarefas `files`, pastas de dados de bancos detectadas são excluídas automaticamente, com aviso.
+1. **Tarefa do tipo `database`** ([database-backup.md](database-backup.md)) — dump consistente gerado pelo próprio banco (PostgreSQL, MySQL/MariaDB, SQLite; Firebird e SQL Server desde a Fase 4; ou comando personalizado). É o único método que garante consistência transacional. Em tarefas `files`, pastas de dados de bancos detectadas são excluídas automaticamente, com aviso.
 2. **Snapshot VSS** — consistência de "falta de energia" (crash-consistent); bancos com VSS writer (SQL Server) ficam consistentes de fato.
 3. **Sem snapshot** — o arquivo é copiado se puder ser aberto; se estava sendo escrito durante a cópia (tamanho/mtime mudaram entre o início e o fim), a cópia é descartada e o arquivo é marcado como `failed: changed_during_copy`.
 
@@ -664,7 +664,7 @@ Varredura, detecção, cópia segura, versões, catálogo/manifest/journal, recu
 
 ### Fase 2 — Automação, consistência e bancos de dados ✅ (implementada em 2026-11-18, exceto os itens abaixo)
 
-> **Pendências da Fase 2:** migração para MSVC (esta máquina de desenvolvimento não tem Visual Studio; o projeto segue em MinGW), trava no servidor de banco (`remote.server_lock`) e a validação de campo — a semana num PDV de teste do critério de saída. VSS e o registro das tarefas como SYSTEM foram implementados, mas só podem ser exercitados com privilégio de administrador.
+> **Pendências da Fase 2:** migração para MSVC (esta máquina de desenvolvimento não tem Visual Studio; o projeto segue em MinGW) e a validação de campo — a semana num PDV de teste do critério de saída. VSS e o registro das tarefas como SYSTEM foram implementados, mas só podem ser exercitados com privilégio de administrador. A trava no servidor de banco (`remote.server_lock`) foi entregue na Fase 4.
 
 Migração para MSVC, Task Scheduler (SYSTEM), tarefa de manutenção, `config apply`, VSS, hooks, alertas de backup atrasado e cofre ausente, desligamento seguro, `vault-check`. **Tarefas `database`:** PostgreSQL, MySQL/MariaDB, SQLite e comando personalizado; cofre de segredos DPAPI; validação e retenção GFS de dumps; `restore-db`.
 
@@ -672,13 +672,18 @@ Migração para MSVC, Task Scheduler (SYSTEM), tarefa de manutenção, `config a
 
 ### Fase 3 — Interface desktop ✅ (implementada em 2026-11-18)
 
-> Visual da proposta de design 5 ("Cofres"), com tema claro, escuro ou do Windows. O desktop roda como usuário comum e delega ao `synkro-worker` (com UAC) o que exige administrador. **Pendências:** início automático na bandeja ao entrar no Windows (fica com o instalador, Fase 4) e o teste de usabilidade do critério de saída.
+> Visual da proposta de design 5 ("Cofres"), com tema claro, escuro ou do Windows. O desktop roda como usuário comum e delega ao `synkro-worker` (com UAC) o que exige administrador. **Pendência:** o teste de usabilidade do critério de saída. (O início automático na bandeja foi entregue na Fase 4, com o instalador.)
 
 Dashboard, cadastro de cofres (com as checagens), assistente de tarefas de arquivos e de bancos (com teste de conexão), editor YAML integrado com validação ao digitar e painel "O que esta tarefa vai fazer", cadastro de segredos, histórico, restauração pela interface, bandeja com alertas, modo "abrir cofre".
 
 **Saída:** um técnico configura um PDV do zero e faz uma restauração sem consultar documentação.
 
-### Fase 4 — Robustez de campo
+### Fase 4 — Robustez de campo ✅ (implementada em 2026-11-19, exceto os itens abaixo)
+
+> **Entregue:** saúde SMART dos discos (WMI) na checagem do cofre, nos alertas e no painel; trava no servidor de banco (`remote.server_lock`, PostgreSQL e MySQL/MariaDB); teste de restauração automático (`restore_test`, comando `restore-test`, tarefa agendada e alerta); motores **Firebird** (`gbak`) e **SQL Server** (`BACKUP ... COPY_ONLY, CHECKSUM`); exportar/importar configuração entre PDVs (CLI e desktop); pacote de instalação (`installer\package.ps1`, `install.ps1`, `uninstall.ps1`) com permissões, Visualizador de Eventos, início automático na bandeja e Programas e Recursos; [guia de operação](operations.md); teste de estresse com 100 mil arquivos (resultados em [operations.md §9](operations.md#9-teste-de-estresse)). O scrub agendado com reparo já vinha da Fase 2.
+>
+> **Pendências:** instalador **MSI assinado** (depende do WiX e de um certificado de assinatura de código; o pacote atual sai sem assinatura), teste de **longa duração**, validação dos motores contra **servidores reais** (os testes usam ferramentas cliente simuladas) e a execução do instalador, do VSS e do Agendador com privilégio de administrador.
+
 Scrub agendado com reparo entre cofres, saúde SMART, instalador MSI assinado, guia de operação, testes de estresse e de longa duração. Teste de restauração automático de dumps (`restore_test`); motores **Firebird** e **SQL Server**; exportar/importar configuração entre PDVs.
 
 **Saída:** piloto em PDVs reais.
