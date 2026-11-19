@@ -5,19 +5,55 @@
 #include "Theme.h"
 
 #include "config/ConfigLoader.h"
+#include "config/ConfigPackage.h"
 #include "core/Paths.h"
 #include "platform/windows/Snapshot.h"
+#include "platform/windows/Win32.h"
 #include "secrets/SecretStore.h"
 
 #include <QButtonGroup>
+#include <QCheckBox>
+#include <QCoreApplication>
 #include <QDesktopServices>
+#include <QDir>
+#include <QFileDialog>
 #include <QHBoxLayout>
 #include <QInputDialog>
 #include <QMessageBox>
 #include <QRadioButton>
+#include <QSettings>
 #include <QUrl>
 
 using namespace ui;
+
+namespace {
+
+const QString kRunKeyUser = QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run");
+const QString kRunKeyMachine = QStringLiteral("HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\Run");
+const QString kRunValue = QStringLiteral("Synkro");
+
+} // namespace
+
+bool autostartForAllUsers()
+{
+    return QSettings(kRunKeyMachine, QSettings::NativeFormat).contains(kRunValue);
+}
+
+bool autostartForCurrentUser()
+{
+    return QSettings(kRunKeyUser, QSettings::NativeFormat).contains(kRunValue);
+}
+
+bool setAutostartForCurrentUser(bool on)
+{
+    QSettings run(kRunKeyUser, QSettings::NativeFormat);
+    if (on)
+        run.setValue(kRunValue, QStringLiteral("\"%1\" --tray").arg(QDir::toNativeSeparators(QCoreApplication::applicationFilePath())));
+    else
+        run.remove(kRunValue);
+    run.sync();
+    return run.status() == QSettings::NoError;
+}
 
 SettingsPage::SettingsPage() : Page(QStringLiteral("Configurações"), QStringLiteral("Aparência, segredos e configuração do Synkro"))
 {
@@ -49,6 +85,24 @@ void SettingsPage::refresh()
     }
     row->addStretch(1);
     lv->addLayout(row);
+
+    // Início automático na bandeja (por usuário; o instalador pode ligar para todos).
+    lv->addSpacing(6);
+    lv->addWidget(label(QStringLiteral("Inicialização"), "fact"));
+    auto* autostart = new QCheckBox(QStringLiteral("Abrir o Synkro na bandeja ao entrar no Windows"));
+    const bool forAll = autostartForAllUsers();
+    autostart->setChecked(forAll || autostartForCurrentUser());
+    autostart->setEnabled(!forAll);
+    connect(autostart, &QCheckBox::toggled, this, [this](bool on) {
+        if (!setAutostartForCurrentUser(on))
+            QMessageBox::warning(this, QStringLiteral("Inicialização"),
+                                 QStringLiteral("Não foi possível alterar a inicialização automática."));
+    });
+    lv->addWidget(autostart);
+    lv->addWidget(label(forAll ? QStringLiteral("Ligado para todos os usuários pelo instalador.")
+                               : QStringLiteral("Os alertas (backup atrasado, cofre ausente, falhas) aparecem na bandeja "
+                                                "mesmo com a janela fechada."),
+                        "muted"));
     body()->addWidget(look);
 
     // ---- Segredos ----------------------------------------------------------------
@@ -136,8 +190,33 @@ void SettingsPage::refresh()
     connect(openDir, &QPushButton::clicked, [] {
         QDesktopServices::openUrl(QUrl::fromLocalFile(fmt::q(AppContext::instance().configDir())));
     });
+    auto* exportBtn = button(QStringLiteral("Exportar…"), QStringLiteral("external"));
+    exportBtn->setEnabled(!set.hasErrors());
+    exportBtn->setToolTip(QStringLiteral("Gera um pacote para importar em outro PDV (sem senhas e sem a identidade dos discos)"));
+    connect(exportBtn, &QPushButton::clicked, this, [this] {
+        const QString file = QFileDialog::getSaveFileName(this, QStringLiteral("Exportar configuração"),
+                                                          QStringLiteral("synkro-config.yml"),
+                                                          QStringLiteral("Pacote do Synkro (*.yml)"));
+        if (file.isEmpty())
+            return;
+        auto pkg = synkro::config::exportPackage(AppContext::instance().config());
+        if (!pkg) {
+            QMessageBox::warning(this, QStringLiteral("Exportar configuração"), fmt::q(pkg.error().message));
+            return;
+        }
+        if (auto st = synkro::win::writeFileAtomically(QDir::toNativeSeparators(file).toStdWString(), pkg.value()); !st) {
+            QMessageBox::warning(this, QStringLiteral("Exportar configuração"), fmt::q(st.error().message));
+            return;
+        }
+        QMessageBox::information(
+            this, QStringLiteral("Exportar configuração"),
+            QStringLiteral("Pacote gravado. No outro PDV, prepare os discos e importe como administrador:\n\n"
+                           "synkro-worker config import --from \"%1\" --bind <cofre>=<disco>")
+                .arg(QDir::toNativeSeparators(file)));
+    });
     crow->addWidget(editGlobal);
     crow->addWidget(openDir);
+    crow->addWidget(exportBtn);
     crow->addStretch(1);
     crow->addWidget(apply);
     cv->addLayout(crow);

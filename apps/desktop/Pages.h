@@ -78,6 +78,11 @@ private:
     bool m_isDatabase = false;
 };
 
+// Início automático na bandeja ("synkro-desktop --tray") pela chave Run do Windows.
+bool autostartForAllUsers();     // HKLM, gravado pelo instalador
+bool autostartForCurrentUser();  // HKCU
+bool setAutostartForCurrentUser(bool on);
+
 class SettingsPage : public ui::Page {
     Q_OBJECT
 public:
