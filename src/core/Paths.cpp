@@ -26,7 +26,10 @@ std::wstring secretsFile()
 
 std::wstring stateDatabaseFile()
 {
-    return win::joinPath(dataDirectory(), L"synkro.db");
+    // Pasta própria: o desktop roda como usuário comum e precisa gravar no
+    // estado (o WAL do SQLite cria arquivos ao lado do banco), sem ganhar
+    // escrita na configuração nem nos segredos.
+    return win::joinPath(win::joinPath(dataDirectory(), L"state"), L"synkro.db");
 }
 
 } // namespace synkro

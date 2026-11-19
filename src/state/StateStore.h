@@ -41,7 +41,7 @@ struct AlertRow {
     QDateTime lastSeenAt;
 };
 
-// Banco local de estado (<dados>\synkro.db, architecture.md §5): histórico
+// Banco local de estado (<dados>\state\synkro.db, architecture.md §5): histórico
 // de execuções, último contato com cada cofre e alertas. É cache: os cofres
 // continuam sendo a fonte da verdade dos backups.
 class StateStore {
