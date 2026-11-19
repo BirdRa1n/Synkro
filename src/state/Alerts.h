@@ -39,4 +39,10 @@ std::vector<VaultObservation> observeVaults(const config::ConfigSet& set, StateS
 // Registra um alerta no log "Application" do Windows (origem "Synkro").
 void reportToEventLog(const AlertRow& alert, bool resolved = false);
 
+// Ciclo completo usado pelo worker e pelo desktop: observa os cofres, calcula
+// os alertas (inclusive o da última verificação periódica), grava no estado e
+// envia novidades ao Visualizador de Eventos. Devolve os alertas ativos.
+std::vector<AlertRow> refreshAlerts(const config::ConfigSet& set, StateStore& state,
+                                    std::vector<VaultObservation>* observed = nullptr);
+
 } // namespace synkro

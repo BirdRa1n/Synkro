@@ -138,6 +138,27 @@ Result<AlertEvaluation> reconcileAlerts(StateStore& state, const std::vector<Ale
     return ev;
 }
 
+std::vector<AlertRow> refreshAlerts(const config::ConfigSet& set, StateStore& state, std::vector<VaultObservation>* observed)
+{
+    const auto vaults = observeVaults(set, state);
+    if (observed)
+        *observed = vaults;
+    auto desired = computeAlerts(set, state, vaults, QDateTime::currentDateTimeUtc());
+    const std::string scrub = state.getValue("scrub_problems");
+    if (!scrub.empty())
+        desired.push_back({"scrub_problems", "cofres", AlertSeverity::Critical, scrub, {}, {}});
+    auto ev = reconcileAlerts(state, desired);
+    if (!ev)
+        return desired;
+    if (set.global.alertEventLog) {
+        for (const auto& a : ev.value().opened)
+            reportToEventLog(a);
+        for (const auto& a : ev.value().resolved)
+            reportToEventLog(a, true);
+    }
+    return state.openAlerts(); // com as datas de abertura
+}
+
 void reportToEventLog(const AlertRow& alert, bool resolved)
 {
     HANDLE source = ::RegisterEventSourceW(nullptr, L"Synkro");

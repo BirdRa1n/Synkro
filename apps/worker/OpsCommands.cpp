@@ -51,19 +51,7 @@ std::optional<synkro::StateStore> openState()
 // Avalia os alertas, grava no estado e envia novidades ao Visualizador de Eventos.
 std::vector<synkro::AlertRow> evaluateAlerts(const synkro::config::ConfigSet& set, synkro::StateStore& state)
 {
-    const auto vaults = synkro::observeVaults(set, state);
-    auto desired = synkro::computeAlerts(set, state, vaults, QDateTime::currentDateTimeUtc());
-    const std::string scrub = state.getValue("scrub_problems");
-    if (!scrub.empty())
-        desired.push_back({"scrub_problems", "cofres", synkro::AlertSeverity::Critical, scrub, {}, {}});
-    auto ev = synkro::reconcileAlerts(state, desired);
-    if (!ev)
-        return desired;
-    for (const auto& a : ev.value().opened)
-        synkro::reportToEventLog(a);
-    for (const auto& a : ev.value().resolved)
-        synkro::reportToEventLog(a, true);
-    return ev.value().active;
+    return synkro::refreshAlerts(set, state);
 }
 
 bool anotherJobRunning(const synkro::config::ConfigSet& set, const std::string& self)
