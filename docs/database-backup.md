@@ -24,11 +24,11 @@ Regra: em tarefas do tipo `files`, o Synkro **exclui automaticamente** pastas de
 | MySQL | 5.7, 8.x | Dump lógico SQL | `mysqldump` | 2 |
 | MariaDB | 10.3+ | Dump lógico SQL | `mariadb-dump` (ou `mysqldump`) | 2 |
 | SQLite | 3.x | Online Backup API (embutida no Synkro) | nenhuma | 2 |
-| Firebird | 2.5, 3, 4, 5 | Backup lógico | `gbak` | 4 |
-| SQL Server | 2016+ | `BACKUP DATABASE ... WITH COPY_ONLY` | `sqlcmd` / ODBC | 4 |
+| Firebird | 2.5, 3, 4, 5 | Backup lógico | `gbak` (e `isql` no teste de restauração) | 4 |
+| SQL Server | 2016+ | `BACKUP DATABASE ... WITH COPY_ONLY, CHECKSUM` | `sqlcmd` | 4 |
 | Personalizado | — | Comando definido pelo usuário | qualquer | 2 |
 
-> **Estado da implementação:** PostgreSQL (formatos `custom` e `plain`; `directory` ainda não é suportado), MySQL/MariaDB, SQLite e comando personalizado estão implementados, com guardas, retenção GFS, `restore-db`, trava no servidor (§4A.3) e teste de restauração automático (§9.1, `restore-test`).
+> **Estado da implementação:** todos os motores da tabela estão implementados — PostgreSQL (formatos `custom` e `plain`; `directory` ainda não é suportado), MySQL/MariaDB, Firebird, SQL Server, SQLite e comando personalizado —, com guardas, retenção GFS, `restore-db`, trava no servidor (§4A.3; PostgreSQL e MySQL/MariaDB) e teste de restauração automático (§9.1, `restore-test`). Os testes automatizados exercitam cada motor com ferramentas cliente simuladas; a validação contra servidores reais faz parte do critério de saída da Fase 4.
 
 O Synkro **não embute** `pg_dump` nem `mysqldump`: usa as ferramentas cliente instaladas na máquina, localizadas automaticamente ou pelo caminho informado no YAML (ver 4.1).
 
@@ -186,10 +186,50 @@ custom:
 
 O Synkro trata o arquivo gerado como qualquer outro dump: hash, compressão, cópia verificada para os cofres, metadados e retenção.
 
-### 4.6. Firebird e SQL Server (Fase 4)
+### 4.6. Firebird
 
-- **Firebird:** `gbak -b -g -v -user <u> -password <arquivo> <host>:<banco> stdout`, com validação via `gbak -c` num banco temporário durante o teste de restauração.
-- **SQL Server:** `BACKUP DATABASE [x] TO DISK = '<staging>' WITH COPY_ONLY, CHECKSUM, COMPRESSION`, seguido de `RESTORE VERIFYONLY ... WITH CHECKSUM`. `COPY_ONLY` não interfere na cadeia de logs de outros backups.
+**Comando executado** (um por banco listado):
+
+```
+gbak -b -g -v -y <staging>\pdv.gbak.log -user SYSDBA -fetch_password <arquivo-temporário> localhost/3050:C:\PDV\dados\PDV.FDB <staging>\pdv.fbk
+```
+
+- `-b` é um backup lógico feito numa única transação: o PDV continua funcionando e o arquivo representa um instante único do banco.
+- `-g` desliga a coleta de lixo durante o backup (mais rápido e sem efeito colateral no banco); `firebird.garbage_collect: true` a religa.
+- A senha vai por **arquivo** (`-fetch_password`) na pasta privada da execução, nunca na linha de comando; o caminho desse arquivo também não vai para os metadados.
+- `databases` recebe o **caminho do `.fdb` como o servidor o enxerga** (ou um alias do `databases.conf`); o nome lógico do dump é o nome do arquivo sem extensão, ou o `name` informado. `databases: all` não existe no Firebird.
+
+**Validação:** código de saída 0 **e** a linha final do log verboso (`closing file, committing, and finishing`); as tabelas vêm das linhas `writing data for table` do mesmo log. Depois, compressão zstd (`.fbk.zst`).
+
+**Restauração:** `gbak -c` num arquivo `.fdb` **novo** (`restore-db --to`); `-c` falha se o arquivo existir — o Synkro nunca usa `-rep`. No teste de restauração, o banco temporário é aberto com `isql` (usuário e senha por `ISC_USER`/`ISC_PASSWORD`, só no ambiente do processo filho) para conferir as tabelas e rodar as verificações, e depois é apagado com `DROP DATABASE`. Com servidor remoto, informe `firebird.restore_test_dir` (pasta **no servidor** para o banco temporário).
+
+> A criptografia do tráfego do Firebird depende de `WireCrypt` no `firebird.conf` do servidor (padrão `Enabled` no 3+); o `config validate` avisa quando o servidor é remoto. A trava no servidor (§4A.3) não existe para o Firebird.
+
+### 4.7. SQL Server
+
+**O que é executado** (por banco):
+
+```sql
+-- 1. retrato das tabelas (para as guardas e o teste de restauração)
+SELECT s.name + '.' + t.name FROM sys.tables t JOIN sys.schemas s ON ...
+-- 2. backup sem interferir na cadeia de backups do DBA
+BACKUP DATABASE [ERP] TO DISK = N'<backup_dir>\synkro_<run>_ERP.bak' WITH COPY_ONLY, CHECKSUM, INIT, FORMAT
+-- 3. validação
+RESTORE VERIFYONLY FROM DISK = N'<...>.bak' WITH CHECKSUM
+```
+
+- `COPY_ONLY` não interfere na cadeia de backups diferenciais e de log que o DBA já mantenha.
+- `CHECKSUM` faz o SQL Server conferir cada página ao gravar; `RESTORE VERIFYONLY WITH CHECKSUM` relê o arquivo inteiro.
+- **Quem grava o `.bak` é o serviço do SQL Server**, não o Synkro. Por isso:
+  - **servidor local:** sem configuração, o Synkro usa a pasta de backup padrão da instância (`SERVERPROPERTY('InstanceDefaultBackupPath')`); `sqlserver.backup_dir` troca a pasta;
+  - **servidor remoto:** `sqlserver.backup_dir` é obrigatório e precisa ser um compartilhamento (`\\servidor\synkro$`) em que a conta do serviço do SQL Server grave e a conta do Synkro nesta máquina (SYSTEM = a conta de computador `DOMINIO\PC$`) leia.
+- Depois de validado, o `.bak` é copiado (com SHA-256) para o preparo e **apagado** da pasta do servidor. Por padrão o Synkro comprime com zstd (`.bak.zst`), o que funciona também no SQL Server Express; `native_compression: true` usa `WITH COMPRESSION` do próprio servidor.
+- **Autenticação:** `auth: sql` com a senha em `SQLCMDPASSWORD` (só no ambiente do processo filho, nunca `-P`) ou `auth: windows` (`-E`, conta do serviço do Synkro). `encrypt: mandatory` (padrão em servidor remoto) liga a criptografia (`-N`); `trust_server_certificate: true` aceita certificado autoassinado (`-C`).
+- Instância nomeada: `host: "PDV01\\SQLEXPRESS"`, sem `port`.
+
+**Restauração:** confere que o banco de destino **não existe** (`DB_ID`), copia o `.bak` conferido para a pasta de backup do servidor, lê os arquivos lógicos (`RESTORE FILELISTONLY`) e executa `RESTORE DATABASE [novo] ... WITH CHECKSUM, MOVE ...` para as pastas de dados padrão da instância, com nomes novos — os arquivos do banco original nunca são tocados.
+
+**Permissões mínimas recomendadas:** `db_backupoperator` em cada banco (backup) e, para o teste de restauração num servidor de teste, `dbcreator`.
 
 ---
 

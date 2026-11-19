@@ -32,6 +32,13 @@ struct SqlTarget {
 Result<std::string> runSql(const SqlTarget& target, const std::string& database, const std::string& sql,
                            const std::wstring& workDir, std::int64_t timeoutSeconds = 300);
 
+// "host/porta:caminho" do Firebird (o caminho é como o servidor o enxerga).
+std::string firebirdConnectionString(const Connection& c, const std::string& database);
+
+// Argumentos comuns do sqlcmd (servidor, autenticação, saída sem cabeçalho).
+// A senha nunca entra aqui: vai em SQLCMDPASSWORD no ambiente do filho.
+std::vector<std::wstring> sqlcmdArgs(const std::wstring& tool, const Connection& c, const std::string& database);
+
 // Linhas não vazias de uma saída de runSql.
 std::vector<std::string> outputLines(const std::string& output);
 

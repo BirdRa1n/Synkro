@@ -505,12 +505,12 @@ Cada gatilho vira um gatilho da tarefa correspondente no Task Scheduler (`\Synkr
 
 | Campo | Padrão | Descrição |
 |---|---|---|
-| `engine` | — (obrigatório) | `postgresql` \| `mysql` \| `mariadb` \| `sqlite` \| `custom` (Fase 4: `firebird`, `sqlserver`) |
-| `connection` | — | Obrigatório exceto para `sqlite` e `custom`. Campos: `host`, `port`, `user`, `password`, `sslmode`/`ssl_mode`, `ssl_ca`, `connect_timeout`, `retries`, `allow_insecure` |
+| `engine` | — (obrigatório) | `postgresql` \| `mysql` \| `mariadb` \| `firebird` \| `sqlserver` \| `sqlite` \| `custom` |
+| `connection` | — | Obrigatório exceto para `sqlite` e `custom`. Campos: `host`, `port`, `user`, `password`, `connect_timeout`, `retries`, `allow_insecure`; PostgreSQL: `sslmode`, `ssl_ca`; MySQL/MariaDB: `ssl_mode`, `ssl_ca`; SQL Server: `auth` (`sql`/`windows`), `encrypt` (`mandatory`/`optional`/`strict`), `trust_server_certificate` |
 | `dump_retries` | `1` | Refazer o dump se a conexão cair durante a execução |
-| `remote.server_lock` | `true` se host remoto | Trava no servidor contra dumps simultâneos de várias máquinas |
-| `databases` | — | Lista ou `all` |
-| `postgresql` / `mysql` / `sqlite` / `custom` | ver seção 7 | Opções do motor |
+| `remote.server_lock` | `true` se host remoto | Trava no servidor contra dumps simultâneos de várias máquinas (PostgreSQL e MySQL/MariaDB) |
+| `databases` | — | Lista ou `all` (Firebird: caminho do `.fdb` no servidor, alias ou `{ name, path }`; sem `all`) |
+| `postgresql` / `mysql` / `firebird` / `sqlserver` / `sqlite` / `custom` | ver seção 7 e [database-backup.md §4](database-backup.md#4-como-cada-motor-é-copiado) | Opções do motor. `firebird`: `garbage_collect`, `compression`, `compression_level`, `restore_test_dir`, `extra_args`. `sqlserver`: `backup_dir` (obrigatório em servidor remoto, compartilhamento `\\servidor\pasta`), `native_compression`, `compression_level` |
 | `tools.*` | `auto` | Caminho da ferramenta cliente |
 | `staging` | `local` | Área de preparo |
 | `retention.keep_last` / `keep_daily` / `keep_weekly` / `keep_monthly` | `7` / `14` / `8` / `12` | GFS |

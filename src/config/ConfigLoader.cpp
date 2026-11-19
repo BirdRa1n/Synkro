@@ -502,7 +502,12 @@ std::optional<YAML::Node> parseYaml(const std::string& text, Reader& r)
 
 bool isLocalHost(const std::string& h)
 {
-    return h == "localhost" || h == "127.0.0.1" || h == "::1" || h == ".";
+    if (h == "localhost" || h == "127.0.0.1" || h == "::1" || h == "." || h == "(local)")
+        return true;
+    // O próprio nome do computador (ex.: "PDV01\SQLEXPRESS").
+    wchar_t name[MAX_COMPUTERNAME_LENGTH + 1] = {};
+    DWORD size = MAX_COMPUTERNAME_LENGTH + 1;
+    return ::GetComputerNameW(name, &size) && win::foldCase(win::fromUtf8(h)) == win::foldCase(std::wstring(name, size));
 }
 
 bool isNetworkPath(const std::wstring& p)
@@ -535,12 +540,52 @@ const std::set<std::string>& forbiddenArgs(const std::string& engine)
     static const std::set<std::string> my = {"--result-file", "-r", "--password", "-p", "--defaults-file",
                                              "--defaults-extra-file", "--host", "-h", "--user", "-u",
                                              "--databases", "-B", "--all-databases", "-A"};
+    static const std::set<std::string> fb = {"-b", "-backup_database", "-c", "-create_database", "-r", "-rep",
+                                             "-replace_database", "-user", "-password", "-pas", "-fetch_password",
+                                             "-fe", "-y", "-se", "-service"};
     static const std::set<std::string> none;
     if (engine == "postgresql")
         return pg;
     if (engine == "mysql" || engine == "mariadb")
         return my;
+    if (engine == "firebird")
+        return fb;
     return none;
+}
+
+long long defaultPort(const std::string& engine)
+{
+    if (engine == "postgresql")
+        return 5432;
+    if (engine == "firebird")
+        return 3050;
+    if (engine == "sqlserver")
+        return 1433;
+    return 3306;
+}
+
+// Nome lógico de um banco Firebird: o nome do arquivo sem extensão
+// ("C:/PDV/dados/PDV.FDB" -> "PDV") ou o próprio alias.
+std::string firebirdLogicalName(const std::string& path)
+{
+    size_t start = path.find_last_of("/\\");
+    std::string name = start == std::string::npos ? path : path.substr(start + 1);
+    const size_t dot = name.rfind('.');
+    if (dot != std::string::npos && dot > 0)
+        name = name.substr(0, dot);
+    return name;
+}
+
+// Nomes de banco do SQL Server aceitos pelo Synkro (vão entre colchetes no T-SQL).
+bool validSqlServerName(const std::string& n)
+{
+    if (n.empty() || n.size() > 128)
+        return false;
+    for (char c : n) {
+        if (c == ']' || c == '\'' || c == ';' || static_cast<unsigned char>(c) < 32)
+            return false;
+    }
+    return true;
 }
 
 std::vector<std::string> checkExtraArgs(Reader& r, const YAML::Node& section, const std::string& path,
@@ -627,31 +672,41 @@ void parseDatabaseJob(Reader& r, const YAML::Node& doc, JobConfig& job)
     auto engine = r.str(doc, "engine", "", true);
     if (!engine)
         return;
-    if (*engine == "firebird" || *engine == "sqlserver") {
-        r.error(doc["engine"], "engine", "o motor " + *engine + " está previsto para a Fase 4 do Synkro");
-        return;
-    }
-    if (*engine != "postgresql" && *engine != "mysql" && *engine != "mariadb" && *engine != "sqlite"
-        && *engine != "custom") {
-        r.error(doc["engine"], "engine", "motor inválido (use postgresql | mysql | mariadb | sqlite | custom)");
+    if (*engine != "postgresql" && *engine != "mysql" && *engine != "mariadb" && *engine != "firebird"
+        && *engine != "sqlserver" && *engine != "sqlite" && *engine != "custom") {
+        r.error(doc["engine"], "engine",
+                "motor inválido (use postgresql | mysql | mariadb | firebird | sqlserver | sqlite | custom)");
         return;
     }
     d.engine = *engine;
-    const bool server = d.engine == "postgresql" || d.engine == "mysql" || d.engine == "mariadb";
+    const bool firebird = d.engine == "firebird", mssql = d.engine == "sqlserver";
+    const bool server = d.engine == "postgresql" || d.engine == "mysql" || d.engine == "mariadb" || firebird || mssql;
 
     if (server) {
         const YAML::Node c = doc["connection"];
         if (!c) {
             r.error(doc, "connection", "campo obrigatório para " + d.engine);
         } else if (r.requireMap(c, "connection")) {
-            r.checkKeys(c, "connection", {"host", "port", "user", "password", "sslmode", "ssl_mode", "ssl_ca",
-                                          "connect_timeout", "retries", "allow_insecure"});
+            if (firebird)
+                r.checkKeys(c, "connection", {"host", "port", "user", "password", "connect_timeout", "retries", "allow_insecure"});
+            else if (mssql)
+                r.checkKeys(c, "connection", {"host", "port", "auth", "user", "password", "encrypt", "trust_server_certificate",
+                                              "connect_timeout", "retries", "allow_insecure"});
+            else
+                r.checkKeys(c, "connection", {"host", "port", "user", "password", "sslmode", "ssl_mode", "ssl_ca",
+                                              "connect_timeout", "retries", "allow_insecure"});
             d.host = r.str(c, "host", "connection", true).value_or("");
-            const long long defPort = d.engine == "postgresql" ? 5432 : 3306;
-            d.port = static_cast<int>(r.integer(c, "port", "connection", 1, 65535).value_or(defPort));
-            d.user = r.str(c, "user", "connection", true).value_or("");
+            // SQL Server com instância nomeada ("SRV\SQLEXPRESS") usa o SQL Browser, sem porta fixa.
+            const bool namedInstance = mssql && d.host.find('\\') != std::string::npos;
+            const long long defPort = defaultPort(d.engine);
+            d.port = static_cast<int>(r.integer(c, "port", "connection", 1, 65535).value_or(namedInstance ? 0 : defPort));
+            if (mssql)
+                d.windowsAuth = r.oneOf(c, "auth", "connection", {"sql", "windows"}).value_or("sql") == "windows";
+            d.user = r.str(c, "user", "connection", !d.windowsAuth).value_or("");
             d.password = r.secret(c, "password", "connection");
-            d.remote = !d.host.empty() && !isLocalHost(d.host);
+            if (d.windowsAuth && (c["user"] || c["password"]))
+                r.error(c, "connection", "com auth: windows não informe user nem password (usa a conta do serviço do Synkro)");
+            d.remote = !d.host.empty() && !isLocalDatabaseHost(d.host);
             d.allowInsecure = r.boolean(c, "allow_insecure", "connection").value_or(false);
             if (auto ca = r.str(c, "ssl_ca", "connection")) {
                 d.sslCa = w(*ca);
@@ -662,7 +717,17 @@ void parseDatabaseJob(Reader& r, const YAML::Node& doc, JobConfig& job)
             if (auto n = r.integer(c, "retries", "connection", 0, 20))
                 d.retries = static_cast<int>(*n);
 
-            if (d.engine == "postgresql") {
+            if (firebird) {
+                // O gbak não tem opção de criptografia: vale o WireCrypt do servidor (padrão Enabled no 3+).
+                if (d.remote)
+                    r.warn(c, "connection", "Firebird remoto: a criptografia do tráfego depende de WireCrypt = Required "
+                                            "no firebird.conf do servidor");
+            } else if (mssql) {
+                d.sslMode = r.oneOf(c, "encrypt", "connection", {"mandatory", "optional", "strict"})
+                                .value_or(d.remote ? "mandatory" : "optional");
+                if (auto b = r.boolean(c, "trust_server_certificate", "connection"))
+                    d.options["trust_server_certificate"] = *b ? "true" : "false";
+            } else if (d.engine == "postgresql") {
                 if (c["ssl_mode"])
                     r.error(c["ssl_mode"], "connection.ssl_mode", "no PostgreSQL o campo é sslmode");
                 d.sslMode = r.oneOf(c, "sslmode", "connection", {"disable", "prefer", "require", "verify-ca", "verify-full"})
@@ -675,13 +740,15 @@ void parseDatabaseJob(Reader& r, const YAML::Node& doc, JobConfig& job)
                                 .value_or(d.remote ? "required" : "preferred");
             }
             const bool insecure = d.sslMode == "disable" || d.sslMode == "prefer" || d.sslMode == "disabled"
-                                  || d.sslMode == "preferred";
+                                  || d.sslMode == "preferred" || d.sslMode == "optional";
             if (d.remote && insecure && !d.allowInsecure)
-                r.error(c, "connection", "servidor remoto sem criptografia obrigatória: use sslmode/ssl_mode "
-                                         "require(d) ou informe allow_insecure: true");
+                r.error(c, "connection", mssql ? "servidor remoto sem criptografia obrigatória: use encrypt: mandatory "
+                                                 "(ou strict) ou informe allow_insecure: true"
+                                               : "servidor remoto sem criptografia obrigatória: use sslmode/ssl_mode "
+                                                 "require(d) ou informe allow_insecure: true");
             if (d.remote && d.allowInsecure)
                 r.warn(c, "connection.allow_insecure", "conexão remota sem criptografia garantida");
-            if (d.password.kind == SecretRef::Kind::None && !c["password"])
+            if (!d.windowsAuth && d.password.kind == SecretRef::Kind::None && !c["password"])
                 r.warn(c, "connection.password", "sem senha configurada");
         }
 
@@ -689,22 +756,42 @@ void parseDatabaseJob(Reader& r, const YAML::Node& doc, JobConfig& job)
         if (!dbs) {
             r.error(doc, "databases", "informe os bancos (lista) ou \"all\"");
         } else if (dbs.IsScalar() && dbs.Scalar() == "all") {
+            if (firebird)
+                r.error(dbs, "databases", "o Firebird não lista bancos: informe o caminho de cada .fdb ou o alias");
             d.allDatabases = true;
         } else if (dbs.IsSequence()) {
             int i = 0;
             for (const auto& item : dbs) {
                 const std::string p = "databases[" + std::to_string(i++) + "]";
                 if (item.IsScalar()) {
-                    d.databases.push_back({item.Scalar(), {}});
-                } else if (item.IsMap()) {
-                    r.checkKeys(item, p, {"name", "exclude_tables"});
                     DatabaseEntry e;
-                    e.name = r.str(item, "name", p, true).value_or("");
-                    e.excludeTables = r.strings(item, "exclude_tables", p);
+                    e.name = item.Scalar();
+                    if (firebird) {
+                        e.path = item.Scalar();
+                        e.name = firebirdLogicalName(e.path);
+                    }
+                    d.databases.push_back(std::move(e));
+                } else if (item.IsMap()) {
+                    DatabaseEntry e;
+                    if (firebird) {
+                        r.checkKeys(item, p, {"name", "path"});
+                        e.path = r.str(item, "path", p, true).value_or("");
+                        e.name = r.str(item, "name", p).value_or(firebirdLogicalName(e.path));
+                    } else {
+                        if (mssql)
+                            r.checkKeys(item, p, {"name"});
+                        else
+                            r.checkKeys(item, p, {"name", "exclude_tables"});
+                        e.name = r.str(item, "name", p, true).value_or("");
+                        e.excludeTables = r.strings(item, "exclude_tables", p);
+                    }
                     d.databases.push_back(std::move(e));
                 } else {
-                    r.error(item, p, "use o nome do banco ou { name, exclude_tables }");
+                    r.error(item, p, firebird ? "use o caminho do banco ou { name, path }"
+                                              : "use o nome do banco ou { name, exclude_tables }");
                 }
+                if (mssql && !d.databases.empty() && !validSqlServerName(d.databases.back().name))
+                    r.error(item, p, "nome de banco inválido para o SQL Server");
             }
             if (d.databases.empty())
                 r.error(dbs, "databases", "lista de bancos vazia");
@@ -729,6 +816,56 @@ void parseDatabaseJob(Reader& r, const YAML::Node& doc, JobConfig& job)
         wrongSection(liteSec, "sqlite");
     if (d.engine != "custom")
         wrongSection(cuSec, "custom");
+    const YAML::Node fbSec = doc["firebird"], msSec = doc["sqlserver"];
+    if (!firebird)
+        wrongSection(fbSec, "firebird");
+    if (!mssql)
+        wrongSection(msSec, "sqlserver");
+
+    if (firebird && fbSec && r.requireMap(fbSec, "firebird")) {
+        r.checkKeys(fbSec, "firebird", {"garbage_collect", "compression", "compression_level", "restore_test_dir", "extra_args"});
+        if (auto b = r.boolean(fbSec, "garbage_collect", "firebird"))
+            d.options["garbage_collect"] = *b ? "true" : "false";
+        if (auto s = r.oneOf(fbSec, "compression", "firebird", {"zstd", "none"}))
+            d.options["compression"] = *s;
+        if (auto n = r.integer(fbSec, "compression_level", "firebird", 1, 19))
+            d.options["compression_level"] = std::to_string(*n);
+        if (auto s = r.str(fbSec, "restore_test_dir", "firebird")) {
+            std::string p = *s;
+            std::replace(p.begin(), p.end(), '/', '\\');
+            d.options["restore_test_dir"] = p;
+        }
+        d.extraArgs = checkExtraArgs(r, fbSec, "firebird", d.engine);
+    }
+    if (mssql && msSec && r.requireMap(msSec, "sqlserver")) {
+        r.checkKeys(msSec, "sqlserver", {"backup_dir", "native_compression", "compression_level"});
+        if (auto s = r.str(msSec, "backup_dir", "sqlserver")) {
+            std::wstring p = w(*s);
+            std::replace(p.begin(), p.end(), L'/', L'\\');
+            if (!isAbsoluteWindowsPath(p))
+                r.error(msSec["backup_dir"], "sqlserver.backup_dir", "use um caminho completo (ex.: \"\\\\\\\\servidor\\\\synkro$\")");
+            d.options["backup_dir"] = win::toUtf8(p);
+        }
+        if (auto b = r.boolean(msSec, "native_compression", "sqlserver"))
+            d.options["native_compression"] = *b ? "true" : "false";
+        if (auto n = r.integer(msSec, "compression_level", "sqlserver", 1, 19))
+            d.options["compression_level"] = std::to_string(*n);
+    }
+    if (mssql && d.remote) {
+        // O BACKUP é gravado pelo próprio SQL Server: o Synkro precisa ler o
+        // arquivo por um compartilhamento que os dois enxerguem.
+        const auto it = d.options.find("backup_dir");
+        if (it == d.options.end())
+            r.error(msSec ? msSec : doc, "sqlserver.backup_dir",
+                    "SQL Server remoto: informe uma pasta compartilhada (\\\\servidor\\pasta) em que o serviço do SQL Server "
+                    "grava e esta máquina lê");
+        else if (it->second.rfind("\\\\", 0) != 0)
+            r.error(msSec["backup_dir"], "sqlserver.backup_dir",
+                    "SQL Server remoto: backup_dir precisa ser um compartilhamento de rede (\\\\servidor\\pasta)");
+    }
+    if (firebird && d.remote && !d.options.count("restore_test_dir") && doc["restore_test"])
+        r.warn(doc["restore_test"], "firebird.restore_test_dir",
+               "Firebird remoto: informe firebird.restore_test_dir (pasta no servidor) para o teste de restauração");
 
     if (d.engine == "postgresql" && pgSec && r.requireMap(pgSec, "postgresql")) {
         r.checkKeys(pgSec, "postgresql", {"format", "compress", "include_globals", "jobs", "extra_args"});
@@ -855,7 +992,7 @@ void parseDatabaseJob(Reader& r, const YAML::Node& doc, JobConfig& job)
     if (const YAML::Node t = doc["tools"]) {
         if (r.requireMap(t, "tools")) {
             r.checkKeys(t, "tools", {"pg_dump", "pg_dumpall", "pg_restore", "psql", "createdb", "mysqldump", "mariadb-dump",
-                                     "mysql", "mariadb", "gbak", "sqlcmd"});
+                                     "mysql", "mariadb", "gbak", "isql", "sqlcmd"});
             for (auto it = t.begin(); it != t.end(); ++it) {
                 const std::string tool = it->first.Scalar();
                 const std::string value = it->second.IsScalar() ? it->second.Scalar() : "";
@@ -879,6 +1016,13 @@ void parseDatabaseJob(Reader& r, const YAML::Node& doc, JobConfig& job)
         }
     } else {
         d.serverLock = d.remote;
+    }
+    if (firebird || mssql || !server) {
+        // Firebird e SQL Server não têm trava de sessão confiável pelo cliente de linha de comando.
+        if (d.serverLock && doc["remote"] && doc["remote"]["server_lock"])
+            r.error(doc["remote"]["server_lock"], "remote.server_lock",
+                    "a trava no servidor não é suportada para " + d.engine + "; configure o dump desse banco em uma única máquina");
+        d.serverLock = false;
     }
 
     if (const YAML::Node ret = doc["retention"]) {
@@ -919,7 +1063,7 @@ void parseDatabaseJob(Reader& r, const YAML::Node& doc, JobConfig& job)
                     rtc.sameConnection = false;
                     rtc.host = r.str(c, "host", "restore_test.connection", true).value_or("");
                     rtc.port = static_cast<int>(r.integer(c, "port", "restore_test.connection", 1, 65535)
-                                                    .value_or(d.engine == "postgresql" ? 5432 : 3306));
+                                                    .value_or(defaultPort(d.engine)));
                     rtc.user = r.str(c, "user", "restore_test.connection", true).value_or("");
                     rtc.password = r.secret(c, "password", "restore_test.connection");
                 }
@@ -951,6 +1095,11 @@ void parseDatabaseJob(Reader& r, const YAML::Node& doc, JobConfig& job)
 }
 
 } // namespace
+
+bool isLocalDatabaseHost(const std::string& host)
+{
+    return isLocalHost(host.substr(0, host.find('\\')));
+}
 
 // ---- Documentos ----------------------------------------------------------------
 
@@ -1094,7 +1243,7 @@ void parseJobImpl(Reader& r, const std::optional<YAML::Node>& doc, const GlobalC
     static const std::initializer_list<const char*> filesKeys = {
         "source", "include", "exclude", "consistency", "change_detection", "verify", "retention", "guards"};
     static const std::initializer_list<const char*> dbKeys = {
-        "engine", "connection", "databases", "postgresql", "mysql", "sqlite", "custom", "tools", "staging",
+        "engine", "connection", "databases", "postgresql", "mysql", "firebird", "sqlserver", "sqlite", "custom", "tools", "staging",
         "dump_retries", "remote", "retention", "guards", "restore_test"};
 
     if (!(*doc)["version"])

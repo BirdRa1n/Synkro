@@ -123,14 +123,25 @@ void describeDatabase(std::ostringstream& o, const ConfigSet& set, const JobConf
             o << " " << a;
         o << "\n";
     } else {
-        const std::string engineName = d.engine == "postgresql" ? "PostgreSQL" : d.engine == "mysql" ? "MySQL" : "MariaDB";
-        o << "  " << step++ << ". Conectar ao " << engineName << " em " << d.host << ":" << d.port << " como \"" << d.user
-          << "\"";
+        const std::string engineName = d.engine == "postgresql" ? "PostgreSQL"
+                                       : d.engine == "mysql"      ? "MySQL"
+                                       : d.engine == "firebird"   ? "Firebird"
+                                       : d.engine == "sqlserver"  ? "SQL Server"
+                                                                  : "MariaDB";
+        o << "  " << step++ << ". Conectar ao " << engineName << " em " << d.host;
+        if (d.port > 0)
+            o << ":" << d.port;
+        if (d.windowsAuth)
+            o << " com a autenticação do Windows (conta do serviço do Synkro)";
+        else
+            o << " como \"" << d.user << "\"";
         if (d.password.kind == SecretRef::Kind::Secret)
             o << " (senha do segredo \"" << d.password.name << "\")";
         else if (d.password.kind == SecretRef::Kind::Env)
             o << " (senha da variável " << d.password.name << ")";
-        o << ", criptografia " << d.sslMode << ", até " << d.retries << " tentativas.\n";
+        if (!d.sslMode.empty())
+            o << ", criptografia " << d.sslMode;
+        o << ", até " << d.retries << " tentativas.\n";
         if (d.remote)
             o << "     Servidor remoto: o dump trafega pela rede"
               << (d.serverLock ? " e uma trava no servidor impede dumps simultâneos de outras máquinas" : "") << ".\n";
@@ -138,16 +149,28 @@ void describeDatabase(std::ostringstream& o, const ConfigSet& set, const JobConf
         if (d.allDatabases) {
             o << "todos os bancos";
         } else {
-            for (size_t i = 0; i < d.databases.size(); ++i)
+            for (size_t i = 0; i < d.databases.size(); ++i) {
                 o << (i ? ", " : "") << d.databases[i].name;
+                if (d.engine == "firebird" && d.databases[i].path != d.databases[i].name)
+                    o << " (" << d.databases[i].path << ")";
+            }
         }
         if (d.engine == "postgresql")
             o << " com pg_dump (formato " << (d.options.count("format") ? d.options.at("format") : "custom")
               << ", um instante único do banco sem travar o PDV).\n";
+        else if (d.engine == "firebird")
+            o << " com gbak -b (instante único da transação, sem parar o PDV; senha por arquivo temporário).\n";
+        else if (d.engine == "sqlserver")
+            o << " com BACKUP DATABASE ... WITH COPY_ONLY, CHECKSUM (não interfere na cadeia de backups de log) em "
+              << (d.options.count("backup_dir") ? d.options.at("backup_dir") : std::string("pasta de backup da instância"))
+              << "; o arquivo é trazido para esta máquina e apagado de lá.\n";
         else
             o << " com mysqldump --single-transaction (instante único para tabelas InnoDB).\n";
-        o << "  " << step++ << ". Validar cada dump antes de gravar ("
-          << (d.engine == "postgresql" ? "pg_restore --list" : "marca \"Dump completed\"") << " e número de tabelas).\n";
+        const char* validation = d.engine == "postgresql" ? "pg_restore --list"
+                                 : d.engine == "firebird"  ? "término registrado no log do gbak"
+                                 : d.engine == "sqlserver" ? "RESTORE VERIFYONLY WITH CHECKSUM"
+                                                           : "marca \"Dump completed\"";
+        o << "  " << step++ << ". Validar cada dump antes de gravar (" << validation << " e número de tabelas).\n";
     }
     describeVaults(o, set, job, step++);
     o << "  " << step++ << ". Manter os dumps: últimos " << d.keepLast << ", 1 por dia por " << d.keepDaily

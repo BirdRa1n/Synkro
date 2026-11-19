@@ -40,7 +40,7 @@ struct Env {
     Env()
     {
         (void)win::createDirectories(tools);
-        for (const wchar_t* name : {L"pg_dump", L"pg_restore", L"pg_dumpall", L"psql", L"createdb", L"mysqldump", L"mysql"})
+        for (const wchar_t* name : {L"pg_dump", L"pg_restore", L"pg_dumpall", L"psql", L"createdb", L"mysqldump", L"mysql", L"gbak", L"isql", L"sqlcmd"})
             ::CopyFileW(QString::fromUtf8(FAKE_DBTOOL).replace('/', '\\').toStdWString().c_str(),
                         win::joinPath(tools, std::wstring(name) + L".exe").c_str(), FALSE);
         for (const auto& v : {vaultA, vaultB}) {
@@ -52,7 +52,7 @@ struct Env {
         qputenv("FAKE_LOG", QString::fromStdWString(log).toUtf8());
         qputenv("FAKE_TABLES", "clientes,vendas");
         for (const char* v : {"FAKE_FAIL", "FAKE_TRUNCATE", "FAKE_MYISAM", "FAKE_PADDING", "FAKE_DATABASES",
-                              "FAKE_RESTORED_TABLES", "FAKE_CHECK_RESULT", "FAKE_RESTORE_OUT"})
+                              "FAKE_RESTORED_TABLES", "FAKE_CHECK_RESULT", "FAKE_RESTORE_OUT", "FAKE_MSSQL_DIR"})
             qunsetenv(v);
     }
 
@@ -73,7 +73,7 @@ struct Env {
         DatabaseBackupRequest r;
         r.jobId = win::fromUtf8(j.id);
         r.job = j.database;
-        for (const wchar_t* t : {L"pg_dump", L"pg_restore", L"pg_dumpall", L"psql", L"createdb", L"mysqldump", L"mysql"})
+        for (const wchar_t* t : {L"pg_dump", L"pg_restore", L"pg_dumpall", L"psql", L"createdb", L"mysqldump", L"mysql", L"gbak", L"isql", L"sqlcmd"})
             r.job.tools[win::toUtf8(t)] = win::joinPath(tools, std::wstring(t) + L".exe");
         if (vaults.empty())
             vaults = {vaultA};
@@ -616,6 +616,130 @@ private slots:
         QVERIFY(isTruthy("t") && isTruthy(" TRUE\n") && isTruthy("1") && !isTruthy("f") && !isTruthy("0") && !isTruthy(""));
         QCOMPARE(quoteIdentifier("mysql", "a`b"), std::string("`a``b`"));
         QCOMPARE(quoteIdentifier("postgresql", "a\"b"), std::string("\"a\"\"b\""));
+        QCOMPARE(quoteIdentifier("sqlserver", "a]b"), std::string("[a]]b]"));
+        QVERIFY(isTruthy("      <true>"));
+        QCOMPARE(parseGbakTables("gbak:    writing data for table \"CLIENTES\"\ngbak:writing data for table VENDAS \n"),
+                 (std::vector<std::string>{"CLIENTES", "VENDAS"}));
+        Connection c{"srv", 3051, "SYSDBA", "x", {}, {}, 15};
+        QCOMPARE(firebirdConnectionString(c, "C:/PDV/PDV.FDB"), std::string("srv/3051:C:/PDV/PDV.FDB"));
+        const QString ms = QString::fromStdWString(buildCommandLine(sqlcmdArgs(L"sqlcmd", Connection{"PDV\\SQLEXPRESS", 0, "", "", "mandatory", {}, 15}, "ERP")));
+        QVERIFY2(ms.contains("-S PDV\\SQLEXPRESS -E -d ERP") && ms.contains("-N") && !ms.contains("-P"), qPrintable(ms));
+    }
+
+    void firebirdBackupRestoreAndTest()
+    {
+        Env env;
+        const std::string yml = "version: 1\nid: fb\nname: fb\ntype: database\nengine: firebird\n"
+                                "connection: { host: localhost, user: SYSDBA, password: { secret: db } }\n"
+                                "databases: [\"C:/PDV/dados/PDV.FDB\"]\n"
+                                "restore_test: { enabled: true, checks: [ { name: ok, sql: \"SELECT TRUE FROM RDB$DATABASE\" } ] }\n";
+        auto j = env.job(yml);
+        auto r = runDatabaseBackup(env.request(j, {env.vaultA, env.vaultB}));
+        QVERIFY2(r.status == RunStatus::Success, describe(r).constData());
+        const vault::JobLayout L(env.vaultA, L"fb");
+        const auto dumps = listDumps(L, "PDV");
+        QCOMPARE(dumps.size(), size_t(1));
+        QCOMPARE(dumps.front().compression, std::string("zstd"));
+        QVERIFY(dumps.front().relativePath.find(L".fbk.zst") != std::wstring::npos);
+        QCOMPARE(dumps.front().tables, (std::vector<std::string>{"clientes", "vendas"}));
+        QVERIFY(dumps.front().command.find("-fetch_password") == std::string::npos);
+        const QByteArray log = readFile(env.log);
+        QVERIFY(log.contains("gbak | -b | -g | -v") && log.contains("localhost/3050:C:/PDV/dados/PDV.FDB"));
+        QVERIFY(!log.contains(kPassword));
+
+        // restore-db: arquivo novo; nunca sobrescreve.
+        DatabaseRestoreRequest rr;
+        rr.vaultLocation = env.vaultA;
+        rr.jobId = L"fb";
+        rr.database = "PDV";
+        rr.job = env.request(j).job;
+        rr.secretsFile = env.secrets;
+        rr.stagingRoot = env.staging;
+        rr.targetPath = win::joinPath(env.root, L"restaurado.fdb");
+        auto restored = restoreDatabase(rr);
+        QVERIFY2(restored.ok(), restored.ok() ? "" : restored.error().message.c_str());
+        QVERIFY(readFile(rr.targetPath).contains("clientes"));
+        auto again = restoreDatabase(rr);
+        QVERIFY(!again.ok());
+        QCOMPARE(again.error().code, ErrorCode::AlreadyExists);
+
+        // Teste de restauração: banco temporário criado, conferido e apagado.
+        RestoreTestRequest t;
+        t.vaultLocation = env.vaultA;
+        t.jobId = L"fb";
+        t.job = env.request(j).job;
+        t.secretsFile = env.secrets;
+        t.stagingRoot = env.staging;
+        auto test = runRestoreTest(t);
+        QVERIFY2(test.ok() && test.value().ok(), test.ok() ? test.value().items.front().detail.c_str() : test.error().message.c_str());
+        QCOMPARE(test.value().items.front().tablesFound, size_t(2));
+        QVERIFY(ops::listSubdirectories(env.staging).empty());
+
+        // Log do gbak sem a linha de término: dump rejeitado.
+        qputenv("FAKE_TRUNCATE", "1");
+        auto bad = runDatabaseBackup(env.request(j));
+        QCOMPARE(bad.status, RunStatus::Failed);
+        QVERIFY(describe(bad).contains("incompleto"));
+    }
+
+    void sqlServerBackupRestoreAndTest()
+    {
+        Env env;
+        const std::wstring msDir = win::joinPath(env.root, L"mssql-backup");
+        QVERIFY(win::createDirectories(msDir).ok());
+        qputenv("FAKE_MSSQL_DIR", QString::fromStdWString(msDir).toUtf8());
+        auto j = env.job("version: 1\nid: ms\nname: ms\ntype: database\nengine: sqlserver\n"
+                         "connection: { host: localhost, user: synkro, password: { secret: db } }\n"
+                         "databases: [PDV]\nrestore_test: { enabled: true }\n");
+        auto r = runDatabaseBackup(env.request(j));
+        QVERIFY2(r.status == RunStatus::Success, describe(r).constData());
+        const vault::JobLayout L(env.vaultA, L"ms");
+        const auto dumps = listDumps(L, "PDV");
+        QCOMPARE(dumps.size(), size_t(1));
+        QCOMPARE(dumps.front().tables, (std::vector<std::string>{"dbo.clientes", "dbo.vendas"}));
+        QCOMPARE(dumps.front().validationMethod, std::string("RESTORE VERIFYONLY WITH CHECKSUM"));
+        QVERIFY(ops::listFiles(msDir, L".bak").empty()); // o .bak saiu da pasta do servidor
+        const QByteArray log = readFile(env.log);
+        QVERIFY(log.contains("WITH COPY_ONLY, CHECKSUM, INIT, FORMAT"));
+        QVERIFY(log.contains("-U | synkro") && !log.contains(kPassword) && !log.contains("| -P |"));
+
+        DatabaseRestoreRequest rr;
+        rr.vaultLocation = env.vaultA;
+        rr.jobId = L"ms";
+        rr.database = "PDV";
+        rr.job = env.request(j).job;
+        rr.secretsFile = env.secrets;
+        rr.stagingRoot = env.staging;
+        rr.targetDatabase = "PDV_restaurado";
+        auto ok = restoreDatabase(rr);
+        QVERIFY2(ok.ok(), ok.ok() ? "" : ok.error().message.c_str());
+        QVERIFY(readFile(env.log).contains("RESTORE DATABASE [PDV_restaurado]"));
+        QVERIFY(readFile(env.log).contains("MOVE N'pdv_log' TO N'"));
+        QVERIFY(ops::listFiles(msDir, L".bak").empty());
+        rr.targetDatabase = "existe";
+        auto exists = restoreDatabase(rr);
+        QVERIFY(!exists.ok());
+        QCOMPARE(exists.error().code, ErrorCode::AlreadyExists);
+
+        RestoreTestRequest t;
+        t.vaultLocation = env.vaultA;
+        t.jobId = L"ms";
+        t.job = env.request(j).job;
+        t.secretsFile = env.secrets;
+        t.stagingRoot = env.staging;
+        auto test = runRestoreTest(t);
+        QVERIFY2(test.ok() && test.value().ok(), test.ok() ? test.value().items.front().detail.c_str() : test.error().message.c_str());
+        QVERIFY(readFile(env.log).contains("DROP DATABASE [synkro_verify_"));
+    }
+
+    void sqlServerWithoutBackupDirFailsClearly()
+    {
+        Env env; // FAKE_MSSQL_DIR ausente: a instância "não informa" a pasta padrão
+        auto j = env.job("version: 1\nid: ms\nname: ms\ntype: database\nengine: sqlserver\n"
+                         "connection: { host: localhost, user: synkro, password: { secret: db } }\ndatabases: [PDV]\n");
+        auto r = runDatabaseBackup(env.request(j));
+        QCOMPARE(r.status, RunStatus::Failed);
+        QVERIFY2(describe(r).contains("sqlserver.backup_dir"), describe(r).constData());
     }
 };
 

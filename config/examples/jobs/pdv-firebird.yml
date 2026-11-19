@@ -1,0 +1,39 @@
+# Firebird do PDV na própria máquina — exemplo (docs/database-backup.md §4.6).
+version: 1
+id: pdv-firebird
+name: "Banco do PDV (Firebird)"
+type: database
+group: noite
+
+engine: firebird
+connection:
+  host: localhost
+  port: 3050
+  user: SYSDBA
+  password: { secret: fb-pdv }
+
+# Caminho do .fdb como o servidor Firebird o enxerga (ou um alias do databases.conf).
+databases:
+  - name: pdv
+    path: "C:/PDV/dados/PDV.FDB"
+
+firebird:
+  garbage_collect: false     # gbak -g: não faz coleta de lixo durante o backup
+  compression: zstd
+
+schedule:
+  - daily: "22:00"
+timeout: 2h
+
+retention:
+  keep_last: 7
+  keep_daily: 14
+  keep_weekly: 8
+  keep_monthly: 12
+
+restore_test:
+  enabled: true
+  schedule: { weekly: { days: [sun], at: "04:30" } }
+  checks:
+    - name: "há vendas"
+      sql: "SELECT IIF(COUNT(*) > 0, 1, 0) FROM VENDAS"

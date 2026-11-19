@@ -1,7 +1,10 @@
 #include "database/Drivers.h"
 
+#include "core/RunId.h"
+#include "database/SqlClient.h"
 #include "database/Sqlite.h"
 #include "database/Tools.h"
+#include "transfer/SafeCopy.h"
 #include "database/Zstd.h"
 #include "engine/Hooks.h"
 #include "engine/VaultOps.h"
@@ -65,6 +68,12 @@ void removeIfExists(const std::wstring& p)
     ::DeleteFileW(win::toExtendedPath(p).c_str());
 }
 
+std::string readText(const std::wstring& path, std::size_t limit)
+{
+    auto r = win::readWholeFile(path, limit);
+    return r ? std::move(r).value() : std::string();
+}
+
 // Executa com novas tentativas (rede instável, servidor reiniciando).
 template <typename Fn>
 auto withRetries(const DumpContext& ctx, Fn&& attempt) -> decltype(attempt())
@@ -79,6 +88,21 @@ auto withRetries(const DumpContext& ctx, Fn&& attempt) -> decltype(attempt())
 }
 
 } // namespace
+
+Connection connectionFor(const config::DatabaseJob& job, std::string password)
+{
+    Connection c;
+    c.host = job.host;
+    c.port = job.port;
+    c.user = job.windowsAuth ? std::string() : job.user;
+    c.password = std::move(password);
+    c.sslMode = job.sslMode;
+    c.sslCa = job.sslCa;
+    c.connectTimeoutSeconds = job.connectTimeoutSeconds;
+    const auto it = job.options.find("trust_server_certificate");
+    c.trustServerCertificate = it != job.options.end() && it->second == "true";
+    return c;
+}
 
 std::vector<std::pair<std::wstring, std::wstring>> pgEnvironment(const Connection& c, const std::wstring& passFile)
 {
@@ -292,6 +316,29 @@ std::vector<std::wstring> mysqldumpArgs(const std::wstring& tool, const std::wst
 Result<std::vector<std::string>> listServerDatabases(const config::DatabaseJob& job, const Connection& c,
                                                      const DumpContext& ctx)
 {
+    if (job.engine == "firebird") {
+        // O Firebird não lista bancos: confere a conexão com cada um informado.
+        std::vector<std::string> out;
+        for (const auto& db : job.databases) {
+            auto r = runSql(SqlTarget{job.engine, job.tools, c}, db.path.empty() ? db.name : db.path,
+                            "SELECT 'ok' FROM RDB$DATABASE", ctx.workDir, 120);
+            if (!r)
+                return Error::make(ErrorCode::IoError, "não foi possível abrir " + db.name + ": " + r.error().message);
+            out.push_back(db.name);
+        }
+        return out;
+    }
+    if (job.engine == "sqlserver") {
+        auto r = withRetries(ctx, [&] {
+            return runSql(SqlTarget{job.engine, job.tools, c}, "master",
+                          "SELECT name FROM sys.databases WHERE database_id > 4 AND state_desc = 'ONLINE' "
+                          "AND source_database_id IS NULL ORDER BY 1",
+                          ctx.workDir, 120);
+        });
+        if (!r)
+            return Error::make(ErrorCode::IoError, "não foi possível listar os bancos do servidor: " + r.error().message);
+        return outputLines(r.value());
+    }
     ProcessSpec spec;
     spec.timeoutMs = 120000;
     auto credDir = PrivateDirectory::create(win::joinPath(ctx.workDir, L"cred-list"));
@@ -571,6 +618,239 @@ Result<DumpArtifact> dumpMysql(const config::DatabaseJob& job, const Connection&
                              + " tabela(s) MyISAM/Aria: --single-transaction não garante um instante único para elas"
                                " (use mysql.myisam_strategy: lock)");
     a.restoreHint = zstd ? "zstd -d <arquivo> e depois mysql <novo_banco> < <arquivo.sql>" : "mysql <novo_banco> < <arquivo>";
+    if (auto st = finalize(a); !st)
+        return st.error();
+    return a;
+}
+
+// ---- Firebird -------------------------------------------------------------------
+
+std::vector<std::string> parseGbakTables(const std::string& log)
+{
+    std::vector<std::string> tables;
+    std::set<std::string> seen;
+    const std::string marker = "writing data for table ";
+    size_t pos = 0;
+    while ((pos = log.find(marker, pos)) != std::string::npos) {
+        pos += marker.size();
+        size_t end = log.find_first_of("\r\n", pos);
+        std::string name = log.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
+        name.erase(std::remove(name.begin(), name.end(), '"'), name.end());
+        while (!name.empty() && name.back() == ' ')
+            name.pop_back();
+        if (!name.empty() && seen.insert(name).second)
+            tables.push_back(name);
+    }
+    return tables;
+}
+
+Result<DumpArtifact> dumpFirebird(const config::DatabaseJob& job, const Connection& c, const config::DatabaseEntry& db,
+                                  const DumpContext& ctx)
+{
+    auto tool = locateTool("gbak", job.tools);
+    if (!tool)
+        return tool.error();
+
+    DumpArtifact a;
+    a.database = db.name;
+    a.dumpFormat = "gbak";
+    a.toolPath = win::toUtf8(tool.value());
+    a.toolVersion = toolVersion(tool.value(), L"-z");
+
+    auto cred = PrivateDirectory::create(win::joinPath(ctx.workDir, L"cred-" + w(safeName(db.name))));
+    if (!cred)
+        return cred.error();
+    auto pass = cred.value().writeFile(L"fbpass", c.password);
+    if (!pass)
+        return pass.error();
+
+    const std::wstring raw = win::joinPath(ctx.workDir, w(safeName(db.name)) + L".fbk");
+    const std::wstring log = win::joinPath(ctx.workDir, w(safeName(db.name)) + L".gbak.log");
+    ProcessSpec spec;
+    // -g: sem coleta de lixo durante o backup (mais rápido, não mexe no banco).
+    spec.args = {tool.value(), L"-b"};
+    if (opt(job, "garbage_collect", "false") != "true")
+        spec.args.push_back(L"-g");
+    spec.args.insert(spec.args.end(), {L"-v", L"-y", log, L"-user", w(c.user), L"-fetch_password", pass.value()});
+    for (const auto& e : job.extraArgs)
+        spec.args.push_back(w(e));
+    spec.args.push_back(w(firebirdConnectionString(c, db.path)));
+    spec.args.push_back(raw);
+    spec.timeoutMs = ctx.timeoutSeconds * 1000;
+    {
+        std::vector<std::wstring> shown;
+        for (size_t i = 0; i < spec.args.size(); ++i) {
+            if (spec.args[i] == L"-fetch_password") {
+                ++i; // caminho do arquivo de credencial não vai para os metadados
+                continue;
+            }
+            shown.push_back(spec.args[i]);
+        }
+        a.command = win::toUtf8(buildCommandLine(shown));
+    }
+
+    auto run = withRetries(ctx, [&]() -> Result<ProcessResult> {
+        removeIfExists(raw);
+        removeIfExists(log); // o gbak recusa -y para um arquivo que já existe
+        auto r = runProcess(spec);
+        if (r && (r.value().exitCode != 0 || r.value().timedOut)) {
+            std::string why = tail(r.value().stderrText);
+            if (why.empty())
+                why = tail(readText(log, 1u << 20));
+            return Error::make(ErrorCode::IoError, r.value().timedOut ? "gbak excedeu o tempo limite" : "gbak falhou: " + why);
+        }
+        return r;
+    });
+    if (!run) {
+        removeIfExists(raw);
+        return run.error();
+    }
+
+    const std::string logText = readText(log, 64u << 20);
+    removeIfExists(log);
+    a.validationMethod = "log do gbak (término e tabelas)";
+    if (logText.find("closing file, committing, and finishing") == std::string::npos) {
+        removeIfExists(raw);
+        return Error::make(ErrorCode::Corrupted, "backup do Firebird incompleto (o log do gbak não registra o término)");
+    }
+    a.tables = parseGbakTables(logText);
+    a.tablesKnown = true;
+
+    const bool zstd = opt(job, "compression", "zstd") == "zstd";
+    if (zstd) {
+        a.stagedFile = raw + L".zst";
+        a.extension = ".fbk.zst";
+        a.compression = "zstd";
+        if (auto st = compressFile(raw, a.stagedFile, std::stoi(opt(job, "compression_level", "3"))); !st)
+            return st.error();
+        removeIfExists(raw);
+    } else {
+        a.stagedFile = raw;
+        a.extension = ".fbk";
+        a.compression = "none";
+    }
+    a.validationResult = "ok";
+    a.restoreHint = std::string(zstd ? "zstd -d <arquivo> e depois " : "")
+                    + "gbak -c -v -user <usuário> -fetch_password <arquivo-senha> <arquivo.fbk> <servidor>/3050:<novo.fdb>";
+    if (auto st = finalize(a); !st)
+        return st.error();
+    return a;
+}
+
+// ---- SQL Server -----------------------------------------------------------------
+
+namespace {
+
+std::string sqlLiteral(const std::wstring& s)
+{
+    std::string out = "N'";
+    for (char ch : win::toUtf8(s)) {
+        if (ch == '\'')
+            out += '\'';
+        out += ch;
+    }
+    return out + "'";
+}
+
+SqlTarget mssqlTarget(const config::DatabaseJob& job, const Connection& c)
+{
+    return SqlTarget{"sqlserver", job.tools, c};
+}
+
+} // namespace
+
+Result<std::wstring> sqlServerBackupDir(const config::DatabaseJob& job, const Connection& c, const std::wstring& workDir)
+{
+    if (auto it = job.options.find("backup_dir"); it != job.options.end() && !it->second.empty())
+        return w(it->second);
+    auto r = runSql(mssqlTarget(job, c), "master",
+                    "SELECT CAST(SERVERPROPERTY('InstanceDefaultBackupPath') AS nvarchar(4000))", workDir);
+    if (!r)
+        return r.error();
+    auto lines = outputLines(r.value());
+    if (lines.empty() || lines.front() == "NULL")
+        return Error::make(ErrorCode::NotFound, "não foi possível descobrir a pasta de backup da instância; informe sqlserver.backup_dir");
+    return w(lines.front());
+}
+
+Result<DumpArtifact> dumpSqlServer(const config::DatabaseJob& job, const Connection& c, const std::string& database,
+                                   const DumpContext& ctx)
+{
+    auto tool = locateTool("sqlcmd", job.tools);
+    if (!tool)
+        return tool.error();
+    const SqlTarget target = mssqlTarget(job, c);
+
+    DumpArtifact a;
+    a.database = database;
+    a.dumpFormat = "mssql-bak";
+    a.toolPath = win::toUtf8(tool.value());
+    a.toolVersion = toolVersion(tool.value(), L"-?");
+
+    auto dir = sqlServerBackupDir(job, c, ctx.workDir);
+    if (!dir)
+        return dir.error();
+
+    // Retrato das tabelas antes do backup (para as guardas e o teste de restauração).
+    auto tables = runSql(target, database,
+                         "SELECT s.name + '.' + t.name FROM sys.tables t JOIN sys.schemas s ON s.schema_id = t.schema_id "
+                         "WHERE t.is_ms_shipped = 0 ORDER BY 1",
+                         ctx.workDir);
+    if (!tables)
+        return Error::make(ErrorCode::IoError, "não foi possível ler as tabelas de " + database + ": " + tables.error().message);
+    a.tables = outputLines(tables.value());
+    a.tablesKnown = true;
+
+    const auto runIt = ctx.vars.find(L"run_id");
+    const std::wstring runId = runIt == ctx.vars.end() ? newRunId() : runIt->second;
+    const std::wstring serverFile = win::joinPath(dir.value(), L"synkro_" + runId + L"_" + w(safeName(database)) + L".bak");
+    const bool native = opt(job, "native_compression", "false") == "true";
+    const std::string backupSql = "BACKUP DATABASE " + quoteIdentifier("sqlserver", database) + " TO DISK = "
+                                  + sqlLiteral(serverFile) + " WITH COPY_ONLY, CHECKSUM, INIT, FORMAT"
+                                  + (native ? ", COMPRESSION" : "");
+    a.command = "sqlcmd -S " + c.host + " -Q \"" + backupSql + "\"";
+
+    auto cleanup = [&] { removeIfExists(serverFile); };
+    auto backed = withRetries(ctx, [&]() -> Result<std::string> {
+        cleanup();
+        return runSql(target, "master", backupSql, ctx.workDir, ctx.timeoutSeconds);
+    });
+    if (!backed) {
+        cleanup();
+        return Error::make(ErrorCode::IoError, "BACKUP DATABASE falhou: " + backed.error().message);
+    }
+
+    a.validationMethod = "RESTORE VERIFYONLY WITH CHECKSUM";
+    auto verified = runSql(target, "master", "RESTORE VERIFYONLY FROM DISK = " + sqlLiteral(serverFile) + " WITH CHECKSUM",
+                           ctx.workDir, ctx.timeoutSeconds);
+    if (!verified) {
+        cleanup();
+        return Error::make(ErrorCode::Corrupted, "RESTORE VERIFYONLY rejeitou o backup: " + verified.error().message);
+    }
+
+    // Traz o .bak para o preparo (conferido) e apaga o original da pasta do servidor.
+    const std::wstring raw = win::joinPath(ctx.workDir, w(safeName(database)) + L".bak");
+    auto copied = copyFileVerified(serverFile, raw);
+    cleanup();
+    if (!copied)
+        return Error::make(ErrorCode::IoError, "não foi possível ler o backup em " + win::toUtf8(serverFile) + ": "
+                                                   + copied.error().message
+                                                   + " (o serviço do SQL Server e esta máquina precisam acessar a pasta)");
+    if (native) {
+        a.stagedFile = raw;
+        a.extension = ".bak";
+        a.compression = "sqlserver-native";
+    } else {
+        a.stagedFile = raw + L".zst";
+        a.extension = ".bak.zst";
+        a.compression = "zstd";
+        if (auto st = compressFile(raw, a.stagedFile, std::stoi(opt(job, "compression_level", "3"))); !st)
+            return st.error();
+        removeIfExists(raw);
+    }
+    a.validationResult = "ok";
+    a.restoreHint = std::string(native ? "" : "zstd -d <arquivo> e depois ")
+                    + "RESTORE DATABASE [novo_banco] FROM DISK = N'<arquivo.bak>' WITH MOVE ... (veja RESTORE FILELISTONLY)";
     if (auto st = finalize(a); !st)
         return st.error();
     return a;

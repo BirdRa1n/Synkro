@@ -25,7 +25,7 @@ Backup incremental, versionado e redundante para dados críticos no Windows, com
 | Restauração point-in-time para pasta nova, conferida por SHA-256 | ✅ |
 | Verificação do cofre (releitura sem cache) | ✅ |
 | Configuração YAML com validação (arquivo/linha) e `config plan` em pt-BR | ✅ |
-| Backup de bancos: PostgreSQL, MySQL/MariaDB, SQLite e comando personalizado, com validação, guardas e retenção GFS | ✅ |
+| Backup de bancos: PostgreSQL, MySQL/MariaDB, Firebird, SQL Server, SQLite e comando personalizado, com validação, guardas e retenção GFS | ✅ |
 | Restauração de bancos sempre em banco/arquivo novo (`restore-db`) | ✅ |
 | Cofre de segredos com DPAPI (`secret set`); senhas nunca no YAML nem na linha de comando | ✅ |
 | Hooks antes/depois, espera por dependências (`depends_on`) | ✅ |
@@ -37,7 +37,7 @@ Backup incremental, versionado e redundante para dados críticos no Windows, com
 | Saúde dos discos (SMART via WMI) na checagem do cofre, nos alertas e no painel | ✅ |
 | Trava no servidor contra dumps simultâneos de várias máquinas (`remote.server_lock`) | ✅ |
 | Teste de restauração automático em banco temporário, com verificações SQL (`restore_test`, `restore-test`) | ✅ |
-| Firebird e SQL Server | Fase 4 |
+| Firebird (`gbak`) e SQL Server (`BACKUP ... COPY_ONLY, CHECKSUM`), com restauração e teste de restauração | ✅ |
 | Migração para MSVC | pendente |
 | Interface desktop: painel, tarefas, cofres, histórico, restauração e configurações; tema claro/escuro/sistema; bandeja com alertas | ✅ |
 | Assistente de tarefas com teste de conexão, editor YAML com validação ao vivo, cadastro de discos com checagem | ✅ |

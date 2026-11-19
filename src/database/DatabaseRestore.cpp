@@ -3,6 +3,7 @@
 #include "core/Paths.h"
 #include "core/RunId.h"
 #include "database/DatabaseBackup.h"
+#include "database/SqlClient.h"
 #include "database/Sqlite.h"
 #include "database/Tools.h"
 #include "database/Zstd.h"
@@ -138,16 +139,130 @@ Result<DatabaseRestoreResult> restoreDatabase(const DatabaseRestoreRequest& req)
         return result;
     }
 
-    // Servidores: sempre num banco novo.
-    if (!validIdentifier(req.targetDatabase))
-        return Error::make(ErrorCode::InvalidArgument,
-                           "nome do banco de destino inválido (letras, números e _; até 63 caracteres)");
     auto password = resolveSecret(job.password, req.secretsFile);
     if (!password)
         return password.error();
-    Connection c{job.host, job.port, job.user, password.value(), job.sslMode, job.sslCa, job.connectTimeoutSeconds};
-    std::string pw = std::move(password).value();
-    wipe(pw);
+    Connection c = connectionFor(job, std::move(password).value());
+
+    if (engine == "firebird") {
+        // O destino é um arquivo .fdb novo, no caminho em que o servidor o enxerga.
+        if (req.targetPath.empty())
+            return Error::make(ErrorCode::InvalidArgument, "informe o arquivo .fdb de destino no servidor (--to)");
+        const bool localServer = c.host.empty() || c.host == "localhost" || c.host == "127.0.0.1";
+        if (localServer && ops::pathExists(req.targetPath))
+            return Error::make(ErrorCode::AlreadyExists, "o arquivo de destino já existe; a restauração nunca sobrescreve");
+        auto tool = locateTool("gbak", job.tools);
+        if (!tool)
+            return tool.error();
+        auto pass = work.value().writeFile(L"fbpass", c.password);
+        if (!pass)
+            return pass.error();
+        ProcessSpec restore;
+        // -c cria o banco e falha se ele já existir (nunca -rep).
+        restore.args = {tool.value(), L"-c", L"-user", w(c.user), L"-fetch_password", pass.value(), payload,
+                        w(firebirdConnectionString(c, win::toUtf8(req.targetPath)))};
+        const auto st = runChecked(restore, "restauração do Firebird (gbak -c)");
+        wipe(c.password);
+        if (!st)
+            return st.error();
+        result.target = win::toUtf8(req.targetPath);
+        if (chosen->tablesKnown)
+            result.detail = std::to_string(chosen->tables.size()) + " tabela(s) no dump";
+        return result;
+    }
+
+    // Servidores: sempre num banco novo.
+    const bool nameOk = engine == "sqlserver" ? !req.targetDatabase.empty() && req.targetDatabase.size() <= 128
+                                                    && req.targetDatabase.find_first_of("]';\"") == std::string::npos
+                                              : validIdentifier(req.targetDatabase);
+    if (!nameOk)
+        return Error::make(ErrorCode::InvalidArgument,
+                           "nome do banco de destino inválido (letras, números e _; até 63 caracteres)");
+
+    if (engine == "sqlserver") {
+        const SqlTarget target{"sqlserver", job.tools, c};
+        const std::wstring wd = work.value().path();
+        auto exists = runSql(target, "master",
+                             "SELECT CASE WHEN DB_ID(N'" + req.targetDatabase + "') IS NULL THEN 0 ELSE 1 END", wd);
+        if (!exists)
+            return exists.error();
+        if (outputLines(exists.value()) != std::vector<std::string>{"0"})
+            return Error::make(ErrorCode::AlreadyExists,
+                               "o banco " + req.targetDatabase + " já existe; a restauração nunca sobrescreve");
+
+        // O SQL Server lê o .bak da pasta dele: copia o dump conferido para lá.
+        auto dir = sqlServerBackupDir(job, c, wd);
+        if (!dir)
+            return dir.error();
+        const std::wstring serverFile = win::joinPath(dir.value(), L"synkro_restore_" + newRunId() + L".bak");
+        auto placed = copyFileVerified(payload, serverFile);
+        if (!placed)
+            return Error::make(ErrorCode::IoError, "não foi possível copiar o backup para " + win::toUtf8(dir.value()) + ": "
+                                                       + placed.error().message);
+        struct Cleanup {
+            std::wstring f;
+            ~Cleanup() { ::DeleteFileW(win::toExtendedPath(f).c_str()); }
+        } cleanup{serverFile};
+
+        std::string literal = "N'";
+        for (char ch : win::toUtf8(serverFile)) {
+            if (ch == '\'')
+                literal += '\'';
+            literal += ch;
+        }
+        literal += "'";
+        auto files = runSql(target, "master", "RESTORE FILELISTONLY FROM DISK = " + literal, wd, 600);
+        if (!files)
+            return Error::make(ErrorCode::Corrupted, "RESTORE FILELISTONLY falhou: " + files.error().message);
+        auto paths = runSql(target, "master",
+                            "SELECT CAST(SERVERPROPERTY('InstanceDefaultDataPath') AS nvarchar(4000)) + '|' + "
+                            "CAST(SERVERPROPERTY('InstanceDefaultLogPath') AS nvarchar(4000))",
+                            wd);
+        if (!paths || outputLines(paths.value()).empty())
+            return Error::make(ErrorCode::NotFound, "não foi possível descobrir as pastas de dados da instância");
+        const std::string both = outputLines(paths.value()).front();
+        std::string dataDir = both.substr(0, both.find('|'));
+        std::string logDir = both.find('|') == std::string::npos ? dataDir : both.substr(both.find('|') + 1);
+        auto withSlash = [](std::string d) { return d.empty() || d.back() == '\\' ? d : d + "\\"; };
+        dataDir = withSlash(dataDir);
+        logDir = withSlash(logDir);
+
+        std::string moves;
+        int n = 0;
+        for (const auto& line : outputLines(files.value())) {
+            std::vector<std::string> cols;
+            size_t s = 0;
+            for (size_t p; (p = line.find('|', s)) != std::string::npos; s = p + 1)
+                cols.push_back(line.substr(s, p - s));
+            cols.push_back(line.substr(s));
+            if (cols.size() < 3)
+                continue;
+            const std::string& logical = cols[0];
+            const bool isLog = cols[2] == "L";
+            const std::string fileExt = isLog ? ".ldf" : (n == 0 ? ".mdf" : ".ndf");
+            std::string fileName = req.targetDatabase + "_" + std::to_string(n++) + fileExt;
+            std::string logicalLit;
+            for (char ch : logical) {
+                if (ch == '\'')
+                    logicalLit += '\'';
+                logicalLit += ch;
+            }
+            moves += ", MOVE N'" + logicalLit + "' TO N'" + (isLog ? logDir : dataDir) + fileName + "'";
+        }
+        if (moves.empty())
+            return Error::make(ErrorCode::Corrupted, "o backup não lista arquivos de dados (RESTORE FILELISTONLY)");
+        auto restored = runSql(target, "master",
+                               "RESTORE DATABASE " + quoteIdentifier("sqlserver", req.targetDatabase) + " FROM DISK = " + literal
+                                   + " WITH CHECKSUM, RECOVERY" + moves,
+                               wd, 24 * 3600);
+        wipe(c.password);
+        if (!restored)
+            return Error::make(ErrorCode::IoError, "restauração do SQL Server falhou: " + restored.error().message);
+        result.target = req.targetDatabase;
+        if (chosen->tablesKnown)
+            result.detail = std::to_string(chosen->tables.size()) + " tabela(s) no dump";
+        return result;
+    }
 
     if (engine == "postgresql") {
         auto pass = work.value().writeFile(L"pgpass", pgpassLine(c.host, c.port, c.user, c.password));

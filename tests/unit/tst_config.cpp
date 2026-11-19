@@ -231,16 +231,72 @@ sqlite:
         QVERIFY2(hasError(d, "sqlite.files", "rede"), qPrintable(dump(d)));
     }
 
-    void futureEngines()
+    void firebirdAndSqlServerRules()
     {
-        const auto d = diagnose(R"(
+        // Firebird não lista bancos e não tem trava no servidor.
+        auto d = diagnose(R"(
 version: 1
 id: fb
 name: fb
 type: database
 engine: firebird
+connection: { host: localhost, user: SYSDBA, password: { secret: fb } }
+databases: all
+remote: { server_lock: true }
 )");
-        QVERIFY(hasError(d, "engine", "Fase 4"));
+        QVERIFY2(hasError(d, "databases", "caminho"), qPrintable(dump(d)));
+        QVERIFY2(hasError(d, "remote.server_lock", "não é suportada"), qPrintable(dump(d)));
+
+        // SQL Server remoto precisa de compartilhamento e criptografia.
+        d = diagnose(R"(
+version: 1
+id: ms
+name: ms
+type: database
+engine: sqlserver
+connection: { host: srv-erp, user: synkro, password: { secret: ms }, encrypt: optional }
+databases: [ERP]
+)");
+        QVERIFY2(hasError(d, "sqlserver.backup_dir", "compartilhada"), qPrintable(dump(d)));
+        QVERIFY2(hasError(d, "connection", "encrypt"), qPrintable(dump(d)));
+
+        d = diagnose("version: 1\nid: ms\nname: ms\ntype: database\nengine: sqlserver\n"
+                     "connection: { host: srv-erp, auth: windows, user: x }\n"
+                     "databases: [\"a]b\"]\nsqlserver: { backup_dir: \"D:/backup\" }\n");
+        QVERIFY2(hasError(d, "connection", "auth: windows"), qPrintable(dump(d)));
+        QVERIFY2(hasError(d, "databases[0]", "inválido"), qPrintable(dump(d)));
+        QVERIFY2(hasError(d, "sqlserver.backup_dir", "compartilhamento"), qPrintable(dump(d)));
+    }
+
+    void firebirdAndSqlServerParse()
+    {
+        GlobalConfig g;
+        std::vector<Diagnostic> d;
+        auto fb = parseJobDocument(R"(
+version: 1
+id: fb
+name: fb
+type: database
+engine: firebird
+connection: { host: localhost, user: SYSDBA, password: { secret: fb } }
+databases: ["C:/PDV/dados/PDV.FDB", { name: estoque, path: "estoque-alias" }]
+firebird: { garbage_collect: true }
+)",
+                                           L"jobs\\fb.yml", g, d);
+        QCOMPARE(fb.database.port, 3050);
+        QCOMPARE(fb.database.databases.size(), size_t(2));
+        QCOMPARE(fb.database.databases[0].name, std::string("PDV"));
+        QCOMPARE(fb.database.databases[0].path, std::string("C:/PDV/dados/PDV.FDB"));
+        QCOMPARE(fb.database.databases[1].path, std::string("estoque-alias"));
+        QVERIFY(!fb.database.serverLock);
+
+        auto ms = parseJobDocument("version: 1\nid: ms\nname: ms\ntype: database\nengine: sqlserver\n"
+                                   "connection: { host: '.\\SQLEXPRESS', auth: windows }\ndatabases: all\n",
+                                   L"jobs\\ms.yml", g, d);
+        QVERIFY(ms.database.windowsAuth);
+        QCOMPARE(ms.database.port, 0); // instância nomeada: sem porta fixa
+        QVERIFY(!ms.database.remote);
+        QCOMPARE(ms.database.sslMode, std::string("optional"));
     }
 
     void brokenYamlReportsLine()
@@ -259,7 +315,7 @@ engine: firebird
         const ConfigSet set = loadConfig(QStringLiteral(SYNKRO_SOURCE_DIR "/config/examples").replace('/', '\\').toStdWString(), opt);
         QVERIFY2(!set.hasErrors(), qPrintable(dump(set.diagnostics)));
         QCOMPARE(set.warningCount(), size_t(0));
-        QCOMPARE(set.jobs.size(), size_t(6));
+        QCOMPARE(set.jobs.size(), size_t(8));
         QCOMPARE(set.global.vaults.size(), size_t(2));
 
         const JobConfig* files = set.findJob("pdv-arquivos");

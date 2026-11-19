@@ -31,6 +31,7 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMessageBox>
+#include <QFileInfo>
 #include <QPlainTextEdit>
 #include <QRegularExpression>
 #include <QSpinBox>
@@ -357,6 +358,8 @@ JobWizard::JobWizard(QWidget* parent) : QWizard(parent)
     m_engine->addItem(QStringLiteral("PostgreSQL"), "postgresql");
     m_engine->addItem(QStringLiteral("MySQL"), "mysql");
     m_engine->addItem(QStringLiteral("MariaDB"), "mariadb");
+    m_engine->addItem(QStringLiteral("Firebird"), "firebird");
+    m_engine->addItem(QStringLiteral("SQL Server"), "sqlserver");
     m_engine->addItem(QStringLiteral("SQLite (arquivo)"), "sqlite");
     m_host = new QLineEdit(QStringLiteral("localhost"));
     m_port = new QSpinBox;
@@ -381,7 +384,16 @@ JobWizard::JobWizard(QWidget* parent) : QWizard(parent)
                            static_cast<QWidget*>(m_password), static_cast<QWidget*>(m_secretName), static_cast<QWidget*>(m_databases)})
             w->setEnabled(server);
         m_sqliteFiles->setEnabled(!server);
-        m_port->setValue(e == QLatin1String("postgresql") ? 5432 : 3306);
+        m_port->setValue(e == QLatin1String("postgresql") ? 5432
+                         : e == QLatin1String("firebird")  ? 3050
+                         : e == QLatin1String("sqlserver") ? 1433
+                                                           : 3306);
+        if (e == QLatin1String("firebird")) {
+            m_user->setText(QStringLiteral("SYSDBA"));
+            m_databases->setPlaceholderText(QStringLiteral("C:\\PDV\\dados\\PDV.FDB  (caminho no servidor ou alias)"));
+        } else {
+            m_databases->setPlaceholderText(QStringLiteral("pdv_vendas, pdv_estoque  —  ou  all"));
+        }
     });
     df->addRow(QStringLiteral("Motor"), m_engine);
     df->addRow(QStringLiteral("Servidor"), m_host);
@@ -510,11 +522,22 @@ synkro::config::JobConfig JobWizard::buildJob() const
             d.user = m_user->text().trimmed().toStdString();
             d.password = {synkro::config::SecretRef::Kind::Secret, m_secretName->text().trimmed().toStdString()};
             const QString dbs = m_databases->text().trimmed();
-            if (dbs == QLatin1String("all"))
+            if (dbs == QLatin1String("all")) {
                 d.allDatabases = true;
-            else
-                for (const auto& n : dbs.split(',', Qt::SkipEmptyParts))
-                    d.databases.push_back({n.trimmed().toStdString(), {}});
+            } else {
+                for (const auto& n : dbs.split(',', Qt::SkipEmptyParts)) {
+                    const std::string entry = n.trimmed().toStdString();
+                    if (d.engine == "firebird") {
+                        // Nome lógico = arquivo sem extensão; o caminho vai como o servidor o enxerga.
+                        const QFileInfo fi(n.trimmed());
+                        d.databases.push_back({fi.completeBaseName().toStdString(), {}, entry});
+                    } else {
+                        d.databases.push_back({entry, {}, {}});
+                    }
+                }
+            }
+            if (d.engine == "sqlserver")
+                d.sslMode = synkro::config::isLocalDatabaseHost(d.host) ? "optional" : "mandatory";
         }
     }
     return j;
@@ -527,8 +550,10 @@ void JobWizard::testConnection()
         m_connectionResult->setText(QStringLiteral("SQLite não precisa de conexão."));
         return;
     }
-    synkro::db::Connection c{job.database.host, job.database.port, job.database.user, m_password->text().toStdString(),
-                             job.database.remote ? "require" : "", {}, 10};
+    synkro::db::Connection c = synkro::db::connectionFor(job.database, m_password->text().toStdString());
+    c.connectTimeoutSeconds = 10;
+    if (job.database.engine == "postgresql" && !synkro::config::isLocalDatabaseHost(job.database.host))
+        c.sslMode = "require";
     m_connectionResult->setText(QStringLiteral("testando…"));
     auto* watcher = new QFutureWatcher<QString>(this);
     connect(watcher, &QFutureWatcher<QString>::finished, this, [this, watcher] {

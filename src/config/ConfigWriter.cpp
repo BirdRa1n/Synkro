@@ -264,12 +264,25 @@ std::string emitJob(const JobConfig& j)
     } else {
         const DatabaseJob& d = j.database;
         o << "\nengine: " << d.engine << "\n";
-        if (d.engine == "postgresql" || d.engine == "mysql" || d.engine == "mariadb") {
-            o << "connection:\n  host: " << quote(d.host) << "\n  port: " << d.port << "\n  user: " << quote(d.user) << "\n";
-            if (d.password.kind != SecretRef::Kind::None)
-                o << "  password: " << secret(d.password) << "\n";
-            if (!d.sslMode.empty())
-                o << (d.engine == "postgresql" ? "  sslmode: " : "  ssl_mode: ") << d.sslMode << "\n";
+        if (d.engine == "postgresql" || d.engine == "mysql" || d.engine == "mariadb" || d.engine == "firebird"
+            || d.engine == "sqlserver") {
+            o << "connection:\n  host: " << quote(d.host) << "\n";
+            if (d.port > 0)
+                o << "  port: " << d.port << "\n";
+            if (d.windowsAuth) {
+                o << "  auth: windows\n";
+            } else {
+                if (d.engine == "sqlserver")
+                    o << "  auth: sql\n";
+                o << "  user: " << quote(d.user) << "\n";
+                if (d.password.kind != SecretRef::Kind::None)
+                    o << "  password: " << secret(d.password) << "\n";
+            }
+            if (!d.sslMode.empty() && d.engine != "firebird")
+                o << (d.engine == "postgresql" ? "  sslmode: " : d.engine == "sqlserver" ? "  encrypt: " : "  ssl_mode: ")
+                  << d.sslMode << "\n";
+            if (d.engine == "sqlserver" && d.options.count("trust_server_certificate"))
+                o << "  trust_server_certificate: " << d.options.at("trust_server_certificate") << "\n";
             if (!d.sslCa.empty())
                 o << "  ssl_ca: " << quote(d.sslCa) << "\n";
             if (d.allDatabases) {
@@ -278,12 +291,16 @@ std::string emitJob(const JobConfig& j)
                 o << "databases:\n";
                 for (const auto& db : d.databases) {
                     o << "  - name: " << quote(db.name) << "\n";
+                    if (d.engine == "firebird")
+                        o << "    path: " << quote(db.path.empty() ? db.name : db.path) << "\n";
                     if (!db.excludeTables.empty())
                         o << "    exclude_tables: " << quotedList(db.excludeTables) << "\n";
                 }
             }
             if (d.engine == "postgresql" && d.options.count("include_globals"))
                 o << "postgresql:\n  include_globals: " << d.options.at("include_globals") << "\n";
+            if (d.engine == "sqlserver" && d.options.count("backup_dir"))
+                o << "sqlserver:\n  backup_dir: " << quote(d.options.at("backup_dir")) << "\n";
         } else if (d.engine == "sqlite") {
             o << "sqlite:\n  files:\n";
             for (const auto& f : d.sqliteFiles)

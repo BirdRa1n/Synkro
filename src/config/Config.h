@@ -120,6 +120,7 @@ struct FilesJob {
 struct DatabaseEntry {
     std::string name;
     std::vector<std::string> excludeTables;
+    std::string path;             // Firebird: caminho do .fdb no servidor ou alias
 };
 
 struct RestoreCheck {
@@ -139,7 +140,8 @@ struct RestoreTestConfig {
 };
 
 struct DatabaseJob {
-    std::string engine;           // postgresql | mysql | mariadb | sqlite | custom
+    std::string engine;           // postgresql | mysql | mariadb | firebird | sqlserver | sqlite | custom
+    bool windowsAuth = false;     // SQL Server: autenticação integrada (conta do serviço)
     std::string host;
     int port = 0;
     std::string user;

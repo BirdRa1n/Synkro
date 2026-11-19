@@ -34,4 +34,8 @@ GlobalConfig parseGlobalDocument(const std::string& yaml, const std::wstring& fi
 
 std::string formatDiagnostic(const Diagnostic& d);
 
+// O host do banco é esta máquina? (localhost, ".", o nome do computador;
+// aceita "host\instância" do SQL Server.)
+bool isLocalDatabaseHost(const std::string& host);
+
 } // namespace synkro::config

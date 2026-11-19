@@ -270,7 +270,7 @@ void RestorePage::restore()
         req.jobId = jobId;
         req.database = item->data(Qt::UserRole + 1).toString().toStdString();
         req.runId = runId;
-        if (engine == "sqlite" || engine == "custom")
+        if (engine == "sqlite" || engine == "custom" || engine == "firebird")
             req.targetPath = QDir::toNativeSeparators(target).toStdWString();
         else
             req.targetDatabase = target.toStdString();

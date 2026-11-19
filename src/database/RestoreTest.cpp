@@ -48,7 +48,8 @@ bool isTruthy(const std::string& value)
         if (!std::isspace(static_cast<unsigned char>(c)))
             v += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     }
-    return v == "t" || v == "true" || v == "1" || v == "yes" || v == "sim" || v == "ok";
+    // "<true>" é como o isql do Firebird mostra booleanos.
+    return v == "t" || v == "true" || v == "1" || v == "yes" || v == "sim" || v == "ok" || v == "<true>";
 }
 
 namespace {
@@ -198,7 +199,15 @@ Result<RestoreTestResult> runRestoreTest(const RestoreTestRequest& req)
         testJob.user = rtc.user;
         testJob.password = rtc.password;
     }
-    const bool server = job.engine == "postgresql" || job.engine == "mysql" || job.engine == "mariadb";
+    const bool server = job.engine == "postgresql" || job.engine == "mysql" || job.engine == "mariadb"
+                        || job.engine == "firebird" || job.engine == "sqlserver";
+    const bool firebird = job.engine == "firebird";
+    if (firebird) {
+        const bool local = testJob.host.empty() || testJob.host == "localhost" || testJob.host == "127.0.0.1";
+        if (!local && !job.options.count("restore_test_dir"))
+            return Error::make(ErrorCode::InvalidArgument,
+                               "Firebird remoto: informe firebird.restore_test_dir (pasta no servidor para o banco temporário)");
+    }
 
     const std::wstring stagingRoot = req.stagingRoot.empty() ? stagingDirectory() : req.stagingRoot;
     const std::wstring testId = newRunId();
@@ -211,9 +220,7 @@ Result<RestoreTestResult> runRestoreTest(const RestoreTestRequest& req)
         auto pass = resolveSecret(testJob.password, req.secretsFile);
         if (!pass)
             return Error::make(ErrorCode::NotFound, "credencial do teste indisponível: " + pass.error().message);
-        target = {job.engine, job.tools,
-                  Connection{testJob.host, testJob.port, testJob.user, std::move(pass).value(), testJob.sslMode,
-                             testJob.sslCa, testJob.connectTimeoutSeconds}};
+        target = {job.engine, job.tools, connectionFor(testJob, std::move(pass).value())};
     }
 
     RestoreTestResult result;
@@ -254,6 +261,37 @@ Result<RestoreTestResult> runRestoreTest(const RestoreTestRequest& req)
                 }
             }
             ::DeleteFileW(win::toExtendedPath(file).c_str());
+        } else if (firebird) {
+            const auto dirIt = job.options.find("restore_test_dir");
+            const std::wstring dir = dirIt != job.options.end() ? win::fromUtf8(dirIt->second) : work.value().path();
+            const std::wstring file =
+                win::joinPath(dir, win::fromUtf8(verifyDatabaseName(testId)) + L"_" + std::to_wstring(++seq) + L".fdb");
+            const std::string fileUtf8 = win::toUtf8(file);
+            rr.targetPath = file;
+            auto restored = restoreDatabase(rr);
+            if (!restored) {
+                item.detail = "a restauração falhou: " + restored.error().message;
+            } else {
+                auto tables = runSql(target, fileUtf8,
+                                     "SELECT TRIM(RDB$RELATION_NAME) FROM RDB$RELATIONS WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0 "
+                                     "AND RDB$VIEW_BLR IS NULL ORDER BY 1",
+                                     work.value().path());
+                if (!tables)
+                    item.detail = "não foi possível listar as tabelas restauradas: " + tables.error().message;
+                else
+                    compareTables(dump, outputLines(tables.value()), item);
+                for (const auto& ck : rtc.checks) {
+                    auto v = runSql(target, fileUtf8, ck.sql, work.value().path());
+                    const std::string first = v ? firstLine(v.value()) : std::string();
+                    item.checks.push_back({ck.name, v && isTruthy(first),
+                                           v ? (isTruthy(first) ? "" : "devolveu " + (first.empty() ? std::string("nada") : first))
+                                             : v.error().message});
+                }
+                auto dropped = runSql(target, fileUtf8, "DROP DATABASE", work.value().path());
+                if (!dropped)
+                    item.cleanupWarning = "o banco temporário " + fileUtf8 + " não pôde ser apagado: " + dropped.error().message;
+            }
+            ::DeleteFileW(win::toExtendedPath(file).c_str()); // sobra local, se houver
         } else {
             const std::string temp = verifyDatabaseName(testId) + "_" + std::to_string(++seq);
             rr.targetDatabase = temp;
@@ -265,6 +303,9 @@ Result<RestoreTestResult> runRestoreTest(const RestoreTestRequest& req)
                     job.engine == "postgresql"
                         ? "SELECT table_schema || '.' || table_name FROM information_schema.tables WHERE table_type = 'BASE TABLE' "
                           "AND table_schema NOT IN ('pg_catalog', 'information_schema') ORDER BY 1"
+                    : job.engine == "sqlserver"
+                        ? "SELECT s.name + '.' + t.name FROM sys.tables t JOIN sys.schemas s ON s.schema_id = t.schema_id "
+                          "WHERE t.is_ms_shipped = 0 ORDER BY 1"
                         : "SHOW TABLES";
                 auto tables = runSql(target, temp, listSql, work.value().path());
                 if (!tables)
@@ -280,8 +321,14 @@ Result<RestoreTestResult> runRestoreTest(const RestoreTestRequest& req)
                 }
             }
             // Apaga o banco temporário mesmo se a restauração falhou no meio.
-            const std::string drop = "DROP DATABASE IF EXISTS " + quoteIdentifier(job.engine, temp);
-            auto dropped = runSql(target, job.engine == "postgresql" ? "postgres" : "", drop, work.value().path());
+            const std::string q = quoteIdentifier(job.engine, temp);
+            const std::string drop =
+                job.engine == "sqlserver"
+                    ? "IF DB_ID(N'" + temp + "') IS NOT NULL BEGIN ALTER DATABASE " + q
+                          + " SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE " + q + "; END"
+                    : "DROP DATABASE IF EXISTS " + q;
+            auto dropped = runSql(target, job.engine == "postgresql" ? "postgres" : job.engine == "sqlserver" ? "master" : "",
+                                  drop, work.value().path());
             if (!dropped)
                 item.cleanupWarning = "o banco temporário " + temp + " não pôde ser apagado: " + dropped.error().message;
         }

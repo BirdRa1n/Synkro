@@ -13,8 +13,9 @@ namespace synkro::db {
 // instalação (versão mais alta) e PATH.
 Result<std::wstring> locateTool(const std::string& tool, const std::map<std::string, std::wstring>& explicitPaths);
 
-// Primeira linha de "<ferramenta> --version" (ex.: "pg_dump (PostgreSQL) 16.4").
-std::string toolVersion(const std::wstring& toolPath);
+// Linha de versão de "<ferramenta> --version" (ex.: "pg_dump (PostgreSQL) 16.4").
+// gbak usa "-z" e sqlcmd, "-?".
+std::string toolVersion(const std::wstring& toolPath, const std::wstring& versionArg = L"--version");
 
 // Pasta temporária da execução, acessível somente ao dono e a SYSTEM.
 // Recebe os arquivos de credenciais e os dumps em preparo; é apagada inteira

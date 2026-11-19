@@ -1,0 +1,35 @@
+# SQL Server da retaguarda em outro servidor — exemplo (docs/database-backup.md §4.6).
+version: 1
+id: retaguarda-sqlserver
+name: "ERP da retaguarda (SQL Server)"
+type: database
+group: noite
+
+engine: sqlserver
+connection:
+  host: srv-erp
+  port: 1433
+  auth: sql                  # ou windows (conta do serviço do Synkro)
+  user: synkro_backup
+  password: { secret: mssql-erp }
+  encrypt: mandatory
+  trust_server_certificate: false
+
+databases: [ERP, ERP_FISCAL]
+
+sqlserver:
+  # O BACKUP é gravado pelo serviço do SQL Server; esta máquina lê o arquivo,
+  # confere, traz para o preparo e apaga de lá.
+  backup_dir: "\\\\srv-erp\\synkro$"
+  native_compression: false  # false = o Synkro comprime com zstd (funciona no Express)
+
+schedule:
+  - daily: "23:30"
+timeout: 4h
+
+restore_test:
+  enabled: true
+  connection:
+    host: localhost
+    user: synkro_verify
+    password: { secret: mssql-teste-local }

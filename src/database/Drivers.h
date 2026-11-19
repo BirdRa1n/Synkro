@@ -21,7 +21,11 @@ struct Connection {
     std::string sslMode;
     std::wstring sslCa;
     std::int64_t connectTimeoutSeconds = 15;
+    bool trustServerCertificate = false; // SQL Server: aceita certificado autoassinado
 };
+
+// Conexão de uma tarefa com a senha já resolvida.
+Connection connectionFor(const config::DatabaseJob& job, std::string password);
 
 // Resultado de um dump já validado, em preparo no staging.
 struct DumpArtifact {
@@ -77,6 +81,18 @@ Result<DumpArtifact> dumpPostgres(const config::DatabaseJob& job, const Connecti
 Result<DumpArtifact> dumpPostgresGlobals(const config::DatabaseJob& job, const Connection& c, const DumpContext& ctx);
 Result<DumpArtifact> dumpMysql(const config::DatabaseJob& job, const Connection& c, const std::string& database,
                                const DumpContext& ctx);
+// Firebird: gbak -b com senha por -fetch_password; validação pelo log do gbak.
+Result<DumpArtifact> dumpFirebird(const config::DatabaseJob& job, const Connection& c, const config::DatabaseEntry& db,
+                                  const DumpContext& ctx);
+// SQL Server: BACKUP DATABASE ... WITH COPY_ONLY, CHECKSUM + RESTORE VERIFYONLY.
+Result<DumpArtifact> dumpSqlServer(const config::DatabaseJob& job, const Connection& c, const std::string& database,
+                                   const DumpContext& ctx);
+// Pasta em que o SQL Server grava/lê os .bak (sqlserver.backup_dir ou a padrão da instância).
+Result<std::wstring> sqlServerBackupDir(const config::DatabaseJob& job, const Connection& c, const std::wstring& workDir);
+
+// Tabelas de um log verboso do gbak ("writing data for table X").
+std::vector<std::string> parseGbakTables(const std::string& log);
+
 Result<DumpArtifact> dumpSqlite(const config::DatabaseJob& job, const std::wstring& file, const std::string& logicalName,
                                 const DumpContext& ctx);
 Result<DumpArtifact> dumpCustom(const config::DatabaseJob& job, const std::map<std::wstring, std::wstring>& env,

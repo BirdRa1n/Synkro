@@ -60,6 +60,24 @@ std::vector<std::wstring> candidateDirs(const std::string& tool)
     } else if (tool == "mysqldump" || tool == "mysql" || tool == "mariadb-dump" || tool == "mariadb") {
         versioned(win::joinPath(programFiles, L"MySQL"), L"MySQL Server");
         versioned(programFiles, L"MariaDB");
+    } else if (tool == "gbak" || tool == "isql") {
+        // Firebird 3+ guarda os executáveis na raiz da instalação; o 2.5, em bin.
+        const std::wstring fb = win::joinPath(programFiles, L"Firebird");
+        std::vector<std::wstring> names = ops::listSubdirectories(fb);
+        std::sort(names.begin(), names.end(), versionLess);
+        for (auto it = names.rbegin(); it != names.rend(); ++it) {
+            dirs.push_back(win::joinPath(fb, *it));
+            dirs.push_back(win::joinPath(win::joinPath(fb, *it), L"bin"));
+        }
+    } else if (tool == "sqlcmd") {
+        const std::wstring ms = win::joinPath(programFiles, L"Microsoft SQL Server");
+        const std::wstring odbc = win::joinPath(win::joinPath(ms, L"Client SDK"), L"ODBC");
+        for (const auto& parent : {odbc, ms}) {
+            std::vector<std::wstring> names = ops::listSubdirectories(parent);
+            std::sort(names.begin(), names.end(), versionLess);
+            for (auto it = names.rbegin(); it != names.rend(); ++it)
+                dirs.push_back(win::joinPath(win::joinPath(win::joinPath(parent, *it), L"Tools"), L"Binn"));
+        }
     }
     return dirs;
 }
@@ -86,17 +104,32 @@ Result<std::wstring> locateTool(const std::string& tool, const std::map<std::str
                        tool + " não encontrado nesta máquina; instale as ferramentas cliente ou informe tools." + tool);
 }
 
-std::string toolVersion(const std::wstring& toolPath)
+std::string toolVersion(const std::wstring& toolPath, const std::wstring& versionArg)
 {
     ProcessSpec spec;
-    spec.args = {toolPath, L"--version"};
+    spec.args = {toolPath, versionArg};
     spec.timeoutMs = 15000;
     auto r = runProcess(spec);
     if (!r)
         return {};
-    std::string out = r.value().stdoutText;
-    const size_t nl = out.find_first_of("\r\n");
-    return nl == std::string::npos ? out : out.substr(0, nl);
+    const std::string out = r.value().stdoutText;
+    // Primeira linha que fale de versão (sqlcmd -? começa pelo nome do produto).
+    std::string first;
+    size_t start = 0;
+    while (start < out.size()) {
+        size_t end = out.find_first_of("\r\n", start);
+        if (end == std::string::npos)
+            end = out.size();
+        const std::string line = out.substr(start, end - start);
+        start = end + 1;
+        if (line.empty())
+            continue;
+        if (first.empty())
+            first = line;
+        if (line.find("ersion") != std::string::npos || line.find("WI-") != std::string::npos)
+            return line;
+    }
+    return first;
 }
 
 Result<PrivateDirectory> PrivateDirectory::create(const std::wstring& path)

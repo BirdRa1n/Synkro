@@ -185,23 +185,18 @@ BackupResult runDatabaseBackup(const DatabaseBackupRequest& req)
     // ---- 1. Gerar e validar os dumps ------------------------------------------
     std::vector<PlannedArtifact> planned;
     const config::DatabaseJob& job = req.job;
-    const bool server = job.engine == "postgresql" || job.engine == "mysql" || job.engine == "mariadb";
+    const bool server = job.engine == "postgresql" || job.engine == "mysql" || job.engine == "mariadb"
+                        || job.engine == "firebird" || job.engine == "sqlserver";
 
     Connection conn;
     if (server) {
-        conn.host = job.host;
-        conn.port = job.port;
-        conn.user = job.user;
-        conn.sslMode = job.sslMode;
-        conn.sslCa = job.sslCa;
-        conn.connectTimeoutSeconds = job.connectTimeoutSeconds;
         auto pass = resolveSecret(job.password, req.secretsFile);
         if (!pass) {
             result.error = "credencial indisponível: " + pass.error().message;
             finishHooks(result);
             return result;
         }
-        conn.password = std::move(pass).value();
+        conn = connectionFor(job, std::move(pass).value());
     }
 
     auto dumpOne = [&](const std::string& name, auto&& fn) {
@@ -232,7 +227,7 @@ BackupResult runDatabaseBackup(const DatabaseBackupRequest& req)
                 return result;
             }
             for (const auto& n : listed.value())
-                dbs.push_back({n, {}});
+                dbs.push_back({n, {}, {}});
         }
         // Trava no servidor (§4A.3): segura durante o dump de cada banco.
         SqlTarget lockTarget{job.engine, job.tools, conn};
@@ -259,6 +254,10 @@ BackupResult runDatabaseBackup(const DatabaseBackupRequest& req)
             }
             if (job.engine == "postgresql")
                 dumpOne(db.name, [&] { return dumpPostgres(job, conn, db, ctx); });
+            else if (job.engine == "firebird")
+                dumpOne(db.name, [&] { return dumpFirebird(job, conn, db, ctx); });
+            else if (job.engine == "sqlserver")
+                dumpOne(db.name, [&] { return dumpSqlServer(job, conn, db.name, ctx); });
             else
                 dumpOne(db.name, [&] { return dumpMysql(job, conn, db.name, ctx); });
         }

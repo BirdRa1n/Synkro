@@ -35,6 +35,10 @@ Result<std::wstring> clientTool(const SqlTarget& t)
 {
     if (t.engine == "postgresql")
         return locateTool("psql", t.tools);
+    if (t.engine == "firebird")
+        return locateTool("isql", t.tools);
+    if (t.engine == "sqlserver")
+        return locateTool("sqlcmd", t.tools);
     Result<std::wstring> tool = locateTool(t.engine == "mariadb" ? "mariadb" : "mysql", t.tools);
     if (!tool && t.engine == "mariadb")
         tool = locateTool("mysql", t.tools);
@@ -79,6 +83,25 @@ Result<ProcessSpec> clientSpec(const SqlTarget& t, PrivateDirectory& cred, const
             spec.args.push_back(L"--database=" + w(database));
         spec.args.push_back(L"-e");
         spec.args.push_back(joined);
+    } else if (t.engine == "firebird") {
+        // isql lê o script de um arquivo; usuário e senha só pelo ambiente do filho.
+        std::string script = "SET HEADING OFF;\n";
+        for (const auto& s : statements)
+            script += win::toUtf8(s) + ";\n";
+        auto file = cred.writeFile(L"script.sql", script);
+        if (!file)
+            return file.error();
+        spec.args = {tool.value(), L"-q", L"-b", L"-i", file.value(), w(firebirdConnectionString(c, database))};
+        spec.environment = {{L"ISC_USER", w(c.user)}, {L"ISC_PASSWORD", w(c.password)}};
+    } else if (t.engine == "sqlserver") {
+        std::wstring joined = L"SET NOCOUNT ON; ";
+        for (const auto& s : statements)
+            joined += s + L"; ";
+        spec.args = sqlcmdArgs(tool.value(), c, database.empty() ? std::string("master") : database);
+        spec.args.push_back(L"-Q");
+        spec.args.push_back(joined);
+        if (!c.user.empty())
+            spec.environment = {{L"SQLCMDPASSWORD", w(c.password)}};
     } else {
         return Error::make(ErrorCode::Unsupported, "cliente SQL não suportado para o motor " + t.engine);
     }
@@ -87,8 +110,45 @@ Result<ProcessSpec> clientSpec(const SqlTarget& t, PrivateDirectory& cred, const
 
 } // namespace
 
+std::string firebirdConnectionString(const Connection& c, const std::string& database)
+{
+    if (c.host.empty())
+        return database;
+    return c.host + "/" + std::to_string(c.port > 0 ? c.port : 3050) + ":" + database;
+}
+
+std::vector<std::wstring> sqlcmdArgs(const std::wstring& tool, const Connection& c, const std::string& database)
+{
+    const std::string server = c.port > 0 ? "tcp:" + c.host + "," + std::to_string(c.port) : c.host;
+    std::vector<std::wstring> a = {tool, L"-S", w(server)};
+    if (c.user.empty()) {
+        a.push_back(L"-E"); // autenticação integrada: conta do serviço do Synkro
+    } else {
+        a.push_back(L"-U");
+        a.push_back(w(c.user)); // a senha vai em SQLCMDPASSWORD, nunca em -P
+    }
+    // -b: código de saída de erro; -r1: mensagens de erro no stderr;
+    // -h -1 -W -s "|": saída sem cabeçalho, sem espaços, separada por "|".
+    a.insert(a.end(), {L"-d", w(database), L"-b", L"-r1", L"-h", L"-1", L"-W", L"-s", L"|", L"-l",
+                       std::to_wstring(c.connectTimeoutSeconds)});
+    if (c.sslMode == "mandatory" || c.sslMode == "strict")
+        a.push_back(L"-N");
+    if (c.trustServerCertificate)
+        a.push_back(L"-C");
+    return a;
+}
+
 std::string quoteIdentifier(const std::string& engine, const std::string& name)
 {
+    if (engine == "sqlserver") {
+        std::string out = "[";
+        for (char ch : name) {
+            if (ch == ']')
+                out += ']';
+            out += ch;
+        }
+        return out + "]";
+    }
     const char q = isMysql(engine) ? '`' : '"';
     std::string out(1, q);
     for (char ch : name) {
@@ -109,8 +169,11 @@ std::vector<std::string> outputLines(const std::string& output)
             end = output.size();
         std::string line = output.substr(start, end - start);
         start = end + 1;
-        while (!line.empty() && (line.back() == '\r' || line.back() == ' '))
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\t'))
             line.pop_back();
+        // isql alinha números à direita.
+        const size_t first = line.find_first_not_of(" \t");
+        line = first == std::string::npos ? std::string() : line.substr(first);
         if (!line.empty())
             out.push_back(line);
     }
@@ -150,6 +213,8 @@ std::string ServerLock::lockName(const std::string& database)
 Result<std::unique_ptr<ServerLock>> ServerLock::acquire(const SqlTarget& target, const std::string& database,
                                                         const std::wstring& workDir, std::int64_t holdSeconds)
 {
+    if (target.engine != "postgresql" && !isMysql(target.engine))
+        return Error::make(ErrorCode::Unsupported, "a trava no servidor não é suportada para " + target.engine);
     std::unique_ptr<ServerLock> lock(new ServerLock());
     auto cred = PrivateDirectory::create(win::joinPath(workDir, L"cred-lock-" + newRunId()));
     if (!cred)

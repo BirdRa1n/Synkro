@@ -117,7 +117,7 @@ private slots:
         j.database.user = "synkro_backup";
         j.database.password = {SecretRef::Kind::Secret, "pg-pdv"};
         j.database.sslMode = "prefer";
-        j.database.databases = {{"pdv_vendas", {"public.log_*"}}};
+        j.database.databases = {{"pdv_vendas", {"public.log_*"}, {}}};
         ScheduleTrigger daily;
         daily.kind = TriggerKind::Daily;
         daily.atMinutes = 22 * 60;
