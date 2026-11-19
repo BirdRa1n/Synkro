@@ -1,4 +1,4 @@
-﻿#include "database/SqlClient.h"
+#include "database/SqlClient.h"
 
 #include "core/RunId.h"
 #include "database/Tools.h"
@@ -72,7 +72,7 @@ Result<ProcessSpec> clientSpec(const SqlTarget& t, PrivateDirectory& cred, const
         std::wstring joined;
         for (const auto& s : statements)
             joined += s + L";";
-        // --defaults-extra-file precisa ser a primeira opÃ§Ã£o; --unbuffered
+        // --defaults-extra-file precisa ser a primeira opção; --unbuffered
         // entrega cada resultado assim que fica pronto (trava no servidor).
         spec.args = {tool.value(), L"--defaults-extra-file=" + defaults.value(), L"-N", L"-B", L"--unbuffered"};
         if (!database.empty())
@@ -80,7 +80,7 @@ Result<ProcessSpec> clientSpec(const SqlTarget& t, PrivateDirectory& cred, const
         spec.args.push_back(L"-e");
         spec.args.push_back(joined);
     } else {
-        return Error::make(ErrorCode::Unsupported, "cliente SQL nÃ£o suportado para o motor " + t.engine);
+        return Error::make(ErrorCode::Unsupported, "cliente SQL não suportado para o motor " + t.engine);
     }
     return spec;
 }
@@ -156,8 +156,8 @@ Result<std::unique_ptr<ServerLock>> ServerLock::acquire(const SqlTarget& target,
         return cred.error();
     lock->m_cred = std::make_unique<PrivateDirectory>(std::move(cred).value());
 
-    // O literal vai entre aspas simples; o nome do banco jÃ¡ foi validado,
-    // mas as aspas sÃ£o duplicadas por garantia.
+    // O literal vai entre aspas simples; o nome do banco já foi validado,
+    // mas as aspas são duplicadas por garantia.
     std::string literal = "'";
     for (char ch : lockName(database)) {
         if (ch == '\'')
@@ -169,14 +169,14 @@ Result<std::unique_ptr<ServerLock>> ServerLock::acquire(const SqlTarget& target,
     const std::int64_t hold = holdSeconds > 0 ? holdSeconds : 86400;
     std::vector<std::wstring> statements;
     if (target.engine == "postgresql") {
-        // A trava de sessÃ£o fica com o processo; pg_sleep sÃ³ mantÃ©m a sessÃ£o viva.
+        // A trava de sessão fica com o processo; pg_sleep só mantém a sessão viva.
         statements = {w("SELECT pg_try_advisory_lock(hashtext(" + literal + "))"),
                       w("SELECT pg_sleep(" + std::to_string(hold) + ")")};
     } else {
         statements = {w("SELECT GET_LOCK(" + literal + ", 0)"), w("SELECT SLEEP(" + std::to_string(hold) + ")")};
     }
     const std::wstring appName = L"synkro-lock@" + QSysInfo::machineHostName().toStdWString();
-    // A trava Ã© por banco: no PostgreSQL ela sÃ³ vale dentro do banco conectado.
+    // A trava é por banco: no PostgreSQL ela só vale dentro do banco conectado.
     auto spec = clientSpec(target, *lock->m_cred, target.engine == "postgresql" ? database : std::string(), statements, appName);
     if (!spec)
         return spec.error();
@@ -217,11 +217,11 @@ Result<std::unique_ptr<ServerLock>> ServerLock::acquire(const SqlTarget& target,
         std::unique_lock g(lock->m_mutex);
         const bool answered = lock->m_cv.wait_for(g, wait, [&] { return lock->m_gotLine || lock->m_exited; });
         if (!answered)
-            return Error::make(ErrorCode::IoError, "o servidor nÃ£o respondeu ao pedido da trava");
+            return Error::make(ErrorCode::IoError, "o servidor não respondeu ao pedido da trava");
         if (!lock->m_gotLine) {
             if (!lock->m_startError.empty())
-                return Error::make(ErrorCode::IoError, "nÃ£o foi possÃ­vel pedir a trava no servidor: " + lock->m_startError);
-            return Error::make(ErrorCode::IoError, "nÃ£o foi possÃ­vel pedir a trava no servidor: " + tail(lock->m_stderr));
+                return Error::make(ErrorCode::IoError, "não foi possível pedir a trava no servidor: " + lock->m_startError);
+            return Error::make(ErrorCode::IoError, "não foi possível pedir a trava no servidor: " + tail(lock->m_stderr));
         }
         first = outputLines(lock->m_stdout).empty() ? std::string() : outputLines(lock->m_stdout).front();
     }
@@ -229,7 +229,7 @@ Result<std::unique_ptr<ServerLock>> ServerLock::acquire(const SqlTarget& target,
         return lock;
     if (first == "f" || first == "0")
         return Error::make(ErrorCode::AlreadyExists,
-                           "outra mÃ¡quina estÃ¡ fazendo o dump de " + database + " neste servidor (trava " + lockName(database) + ")");
+                           "outra máquina está fazendo o dump de " + database + " neste servidor (trava " + lockName(database) + ")");
     return Error::make(ErrorCode::IoError, "resposta inesperada do servidor ao pedir a trava: " + first);
 }
 
