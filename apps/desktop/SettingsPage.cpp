@@ -172,7 +172,7 @@ void SettingsPage::refresh()
     apply->setEnabled(!set.hasErrors());
     connect(apply, &QPushButton::clicked, this, [this] {
         auto r = AppContext::instance().runWorkerElevated(
-            {QStringLiteral("config apply"), QStringLiteral("--config-dir"), fmt::q(AppContext::instance().configDir())});
+            {QStringLiteral("config"), QStringLiteral("apply"), QStringLiteral("--config-dir"), fmt::q(AppContext::instance().configDir())});
         if (!r) {
             QMessageBox::warning(this, QStringLiteral("Aplicar configuração"), fmt::q(r.error().message));
             return;
@@ -214,9 +214,16 @@ void SettingsPage::refresh()
                            "synkro-worker config import --from \"%1\" --bind <cofre>=<disco>")
                 .arg(QDir::toNativeSeparators(file)));
     });
+    auto* importBtn = button(QStringLiteral("Importar…"), QStringLiteral("restore"));
+    importBtn->setToolTip(QStringLiteral("Traz a configuração exportada de outro PDV"));
+    connect(importBtn, &QPushButton::clicked, this, [this] {
+        ImportConfigDialog dlg(this);
+        dlg.exec();
+    });
     crow->addWidget(editGlobal);
     crow->addWidget(openDir);
     crow->addWidget(exportBtn);
+    crow->addWidget(importBtn);
     crow->addStretch(1);
     crow->addWidget(apply);
     cv->addLayout(crow);

@@ -253,9 +253,10 @@ private slots:
         const ConfigSet imported = loadConfig(other, lo);
         QVERIFY2(!imported.hasErrors(), qPrintable(dump(imported)));
         QCOMPARE(imported.global.vaults.size(), size_t(2));
-        QVERIFY(ops::listSubdirectories(env.root).size() > 0);
-        for (const auto& d : ops::listSubdirectories(env.root))
-            QVERIFY2(d.find(L".import-") == std::wstring::npos, "pasta temporária da importação ficou para trás");
+        wchar_t tempRoot[MAX_PATH + 1] = {};
+        ::GetTempPathW(MAX_PATH + 1, tempRoot);
+        for (const auto& d : ops::listSubdirectories(tempRoot))
+            QVERIFY2(d.rfind(L"synkro-import-", 0) != 0, "pasta temporária da importação ficou para trás");
 
         // De novo: nada muda. Tarefa alterada só é substituída com --replace.
         auto again = importPackage(parsed.value(), opt);

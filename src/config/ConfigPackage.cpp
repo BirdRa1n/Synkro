@@ -174,8 +174,11 @@ Result<ImportReport> importPackage(const ConfigPackage& pkg, const ImportOptions
     const std::wstring targetGlobal = win::joinPath(opt.configDir, L"synkro.yml");
     const bool hasGlobal = exists(targetGlobal);
 
-    // Pasta temporária ao lado da configuração: monta, valida e só então grava.
-    const std::wstring temp = opt.configDir + L".import-" + newRunId();
+    // Pasta temporária do usuário: monta, valida e só então grava. (Fica fora
+    // de ProgramData para a simulação funcionar sem administrador.)
+    wchar_t tempRoot[MAX_PATH + 1] = {};
+    ::GetTempPathW(MAX_PATH + 1, tempRoot);
+    const std::wstring temp = win::joinPath(tempRoot, L"synkro-import-" + newRunId());
     struct Cleanup {
         std::wstring dir;
         ~Cleanup() { (void)ops::removeTree(dir); }

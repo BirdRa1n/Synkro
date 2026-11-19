@@ -283,5 +283,9 @@ void MainWindow::saveScreenshots(const QString& dir)
         AddVaultDialog add(this);
         shoot(&add, QStringLiteral("9-adicionar-disco.png"));
     }
+    {
+        ImportConfigDialog import(this);
+        shoot(&import, QStringLiteral("10-importar-config.png"));
+    }
     Theme::instance().setMode(original); // não altera a preferência do usuário
 }

@@ -6,7 +6,10 @@
 #include <QProcess>
 #include <QWizard>
 
+#include <map>
 #include <string>
+#include <utility>
+#include <vector>
 
 class QCheckBox;
 class QComboBox;
@@ -98,6 +101,29 @@ private:
     QLineEdit* m_name;
     QLineEdit* m_value;
     QLineEdit* m_confirm;
+};
+
+// Importar um pacote de configuração de outro PDV (configuration.md §12):
+// liga cada cofre do pacote a um disco desta máquina, simula sem
+// administrador e importa pelo worker elevado.
+class ImportConfigDialog : public QDialog {
+    Q_OBJECT
+public:
+    explicit ImportConfigDialog(QWidget* parent = nullptr);
+
+private:
+    void choosePackage();
+    bool simulate();
+    void runImport();
+    std::map<std::string, std::wstring> bindings() const;
+
+    QString m_file;
+    QLabel* m_source;
+    QVBoxLayout* m_vaultRows;
+    std::vector<std::pair<std::string, QComboBox*>> m_vaultCombos;
+    QCheckBox* m_replace;
+    QTextBrowser* m_report;
+    class QPushButton* m_import;
 };
 
 // Execução de uma tarefa com a saída do worker ao vivo.

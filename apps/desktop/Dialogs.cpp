@@ -7,6 +7,7 @@
 #include "Ui.h"
 
 #include "config/ConfigLoader.h"
+#include "config/ConfigPackage.h"
 #include "config/ConfigWriter.h"
 #include "config/PlanDescriber.h"
 #include "core/Paths.h"
@@ -786,6 +787,213 @@ void SecretDialog::accept()
         return;
     }
     QDialog::accept();
+}
+
+// ============================================================================
+// ImportConfigDialog
+// ============================================================================
+
+ImportConfigDialog::ImportConfigDialog(QWidget* parent) : QDialog(parent)
+{
+    setWindowTitle(QStringLiteral("Importar configuração"));
+    resize(760, 680);
+    auto* v = new QVBoxLayout(this);
+    v->setContentsMargins(24, 22, 24, 22);
+    v->setSpacing(12);
+    v->addWidget(title(QStringLiteral("Importar de outro PDV")));
+    v->addWidget(label(QStringLiteral("O pacote traz as tarefas e as preferências, sem senhas e sem a identidade dos discos. "
+                                      "Ligue cada cofre do pacote a um disco desta máquina já preparado como cofre "
+                                      "(Cofres → Adicionar disco). Nada é gravado sem uma simulação válida."),
+                       "muted"));
+
+    auto* pick = ui::button(QStringLiteral("Escolher pacote…"), QStringLiteral("folder"));
+    connect(pick, &QPushButton::clicked, this, [this] { choosePackage(); });
+    m_source = label(QStringLiteral("Nenhum pacote escolhido."), "muted");
+    auto* top = new QHBoxLayout;
+    top->addWidget(pick);
+    top->addWidget(m_source, 1);
+    v->addLayout(top);
+
+    auto* box = card("insetBox");
+    m_vaultRows = new QVBoxLayout(box);
+    m_vaultRows->setContentsMargins(16, 14, 16, 14);
+    m_vaultRows->setSpacing(8);
+    m_vaultRows->addWidget(label(QStringLiteral("Os cofres do pacote aparecem aqui depois de escolher o pacote."), "muted"));
+    v->addWidget(box);
+
+    m_replace = new QCheckBox(QStringLiteral("Substituir tarefas que já existem nesta máquina com conteúdo diferente"));
+    connect(m_replace, &QCheckBox::toggled, this, [this] { m_import->setEnabled(false); });
+    v->addWidget(m_replace);
+
+    m_report = new QTextBrowser;
+    m_report->setPlaceholderText(QStringLiteral("O resultado da simulação aparece aqui."));
+    v->addWidget(m_report, 1);
+
+    auto* buttons = new QHBoxLayout;
+    auto* simulateBtn = ui::button(QStringLiteral("Simular"), QStringLiteral("check"));
+    connect(simulateBtn, &QPushButton::clicked, this, [this] { simulate(); });
+    auto* cancel = ui::button(QStringLiteral("Fechar"));
+    connect(cancel, &QPushButton::clicked, this, &QDialog::reject);
+    m_import = ui::button(QStringLiteral("Importar (administrador)"), QStringLiteral("shield"), true);
+    m_import->setEnabled(false);
+    connect(m_import, &QPushButton::clicked, this, [this] { runImport(); });
+    buttons->addWidget(simulateBtn);
+    buttons->addStretch(1);
+    buttons->addWidget(cancel);
+    buttons->addWidget(m_import);
+    v->addLayout(buttons);
+}
+
+void ImportConfigDialog::choosePackage()
+{
+    const QString file = QFileDialog::getOpenFileName(this, QStringLiteral("Pacote de configuração"), QString(),
+                                                      QStringLiteral("Pacote do Synkro (*.yml *.yaml)"));
+    if (file.isEmpty())
+        return;
+    auto text = synkro::win::readWholeFile(QDir::toNativeSeparators(file).toStdWString(), 16u << 20);
+    auto pkg = text ? synkro::config::parsePackage(text.value()) : synkro::Result<synkro::config::ConfigPackage>(text.error());
+    if (!pkg) {
+        QMessageBox::warning(this, windowTitle(), fmt::q(pkg.error().message));
+        return;
+    }
+    m_file = QDir::toNativeSeparators(file);
+    m_import->setEnabled(false);
+    m_report->clear();
+    const auto& p = pkg.value();
+    m_source->setText(QStringLiteral("%1 — exportado de %2 em %3 · %4 arquivo(s)")
+                          .arg(QFileInfo(file).fileName(), fmt::q(p.exportedFrom), fmt::q(p.exportedAt))
+                          .arg(p.files.size()));
+
+    // Cofres do Synkro conectados agora (com a identidade lida do vault.json).
+    struct Connected {
+        QString root, label;
+    };
+    std::vector<Connected> connected;
+    for (const auto& s : QStorageInfo::mountedVolumes()) {
+        if (!s.isValid() || !s.isReady())
+            continue;
+        const QString root = QDir::toNativeSeparators(s.rootPath());
+        if (auto id = synkro::vault::readIdentity(root.toStdWString()))
+            connected.push_back({root, id.value().label});
+    }
+
+    clearLayout(m_vaultRows);
+    m_vaultCombos.clear();
+    m_vaultRows->addWidget(label(QStringLiteral("Cofres do pacote"), "fact"));
+    const auto& here = AppContext::instance().config().global;
+    for (const auto& role : p.vaults) {
+        auto* row = new QHBoxLayout;
+        row->addWidget(label(QStringLiteral("%1  (%2)").arg(fmt::q(role.label), fmt::q(role.id))), 1);
+        if (here.findVault(role.id)) {
+            row->addWidget(label(QStringLiteral("já existe nesta máquina"), "muted"));
+        } else {
+            auto* combo = new QComboBox;
+            combo->addItem(QStringLiteral("(não ligar)"), QString());
+            for (const auto& c : connected)
+                combo->addItem(QStringLiteral("%1  %2").arg(c.root, c.label), c.root);
+            // Sugere o disco com o mesmo nome de cofre.
+            for (int i = 1; i < combo->count(); ++i)
+                if (combo->itemText(i).endsWith(fmt::q(role.label)))
+                    combo->setCurrentIndex(i);
+            connect(combo, &QComboBox::currentIndexChanged, this, [this] { m_import->setEnabled(false); });
+            row->addWidget(combo, 1);
+            m_vaultCombos.emplace_back(role.id, combo);
+        }
+        m_vaultRows->addLayout(row);
+    }
+    if (connected.empty())
+        m_vaultRows->addWidget(label(QStringLiteral("Nenhum cofre conectado. Prepare os discos em Cofres → Adicionar disco."),
+                                     "muted"));
+}
+
+std::map<std::string, std::wstring> ImportConfigDialog::bindings() const
+{
+    std::map<std::string, std::wstring> out;
+    for (const auto& [id, combo] : m_vaultCombos) {
+        const QString root = combo->currentData().toString();
+        if (!root.isEmpty())
+            out[id] = root.toStdWString();
+    }
+    return out;
+}
+
+bool ImportConfigDialog::simulate()
+{
+    if (m_file.isEmpty()) {
+        m_report->setPlainText(QStringLiteral("Escolha um pacote."));
+        return false;
+    }
+    auto raw = synkro::win::readWholeFile(m_file.toStdWString(), 16u << 20);
+    if (!raw) {
+        m_report->setPlainText(fmt::q(raw.error().message));
+        return false;
+    }
+    auto pkg = synkro::config::parsePackage(raw.value());
+    if (!pkg) {
+        m_report->setPlainText(fmt::q(pkg.error().message));
+        return false;
+    }
+    synkro::config::ImportOptions opt;
+    opt.configDir = AppContext::instance().configDir();
+    opt.bindings = bindings();
+    opt.replaceJobs = m_replace->isChecked();
+    opt.dryRun = true;
+    auto r = synkro::config::importPackage(pkg.value(), opt);
+    if (!r) {
+        m_report->setPlainText(QStringLiteral("✗ ") + fmt::q(r.error().message));
+        m_import->setEnabled(false);
+        return false;
+    }
+    QString text = QStringLiteral("✓ Simulação válida. Ao importar:\n");
+    for (const auto& w : r.value().written)
+        text += QStringLiteral("  • grava %1\n").arg(fmt::q(w));
+    for (const auto& k : r.value().kept)
+        text += QStringLiteral("  • mantém %1\n").arg(fmt::q(k));
+    for (const auto& w : r.value().warnings)
+        text += QStringLiteral("  ⚠ %1\n").arg(fmt::q(w));
+    for (const auto& d : r.value().diagnostics)
+        if (d.severity == synkro::config::Severity::Warning)
+            text += QStringLiteral("  ⚠ %1\n").arg(fmt::q(synkro::config::formatDiagnostic(d)));
+    if (!r.value().missingSecrets.empty()) {
+        text += QStringLiteral("\nDepois, cadastre em Configurações → Segredos:");
+        for (const auto& s : r.value().missingSecrets)
+            text += QStringLiteral(" %1").arg(fmt::q(s));
+        text += '\n';
+    }
+    if (r.value().written.empty())
+        text += QStringLiteral("\nNada a gravar: esta máquina já tem essa configuração.");
+    m_report->setPlainText(text);
+    m_import->setEnabled(!r.value().written.empty());
+    return true;
+}
+
+void ImportConfigDialog::runImport()
+{
+    if (!simulate())
+        return;
+    QStringList args = {QStringLiteral("config"), QStringLiteral("import"), QStringLiteral("--from"), m_file,
+                        QStringLiteral("--config-dir"), fmt::q(AppContext::instance().configDir())};
+    for (const auto& [id, root] : bindings())
+        args << QStringLiteral("--bind") << fmt::q(id) + QLatin1Char('=') + fmt::q(root);
+    if (m_replace->isChecked())
+        args << QStringLiteral("--replace");
+    auto r = AppContext::instance().runWorkerElevated(args);
+    if (!r) {
+        QMessageBox::warning(this, windowTitle(), fmt::q(r.error().message));
+        return;
+    }
+    if (r.value() != 0) {
+        QMessageBox::warning(this, windowTitle(),
+                             QStringLiteral("O worker terminou com código %1. Rode \"synkro-worker config import --from "
+                                            "<pacote> --dry-run\" num prompt de administrador para ver os detalhes.")
+                                 .arg(r.value()));
+        return;
+    }
+    AppContext::instance().reload();
+    QMessageBox::information(this, windowTitle(),
+                             QStringLiteral("Configuração importada. Cadastre os segredos que faltam e use \"Aplicar e "
+                                            "agendar\" para registrar as tarefas."));
+    accept();
 }
 
 // ============================================================================
