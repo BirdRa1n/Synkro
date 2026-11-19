@@ -3,6 +3,7 @@
 #include "config/ConfigLoader.h"
 #include "core/Paths.h"
 #include "platform/windows/Win32.h"
+#include "process/ProcessRunner.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -70,10 +71,12 @@ std::string AppContext::readConfigFile(const std::wstring& relative) const
 synkro::Result<unsigned long> AppContext::runWorkerElevated(const QStringList& args)
 {
     const std::wstring exe = QDir::toNativeSeparators(workerPath()).toStdWString();
-    QStringList quoted;
+    // Mesma citação do ProcessRunner (regras do CommandLineToArgvW): espaços,
+    // aspas e barras finais ("E:\") chegam intactos ao worker.
+    std::vector<std::wstring> argv;
     for (const auto& a : args)
-        quoted << (a.contains(' ') ? QLatin1Char('"') + a + QLatin1Char('"') : a);
-    const std::wstring params = quoted.join(' ').toStdWString();
+        argv.push_back(a.toStdWString());
+    const std::wstring params = synkro::buildCommandLine(argv);
 
     SHELLEXECUTEINFOW info{};
     info.cbSize = sizeof(info);
