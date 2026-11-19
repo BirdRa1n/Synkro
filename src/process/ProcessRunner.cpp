@@ -147,12 +147,18 @@ Result<ProcessResult> runProcess(const ProcessSpec& spec)
     ProcessResult result;
     std::atomic<bool> finished{false};
     std::atomic<bool> timedOut{false};
+    std::atomic<bool> cancelled{false};
 
     std::thread watchdog([&] {
         const DWORD wait = spec.timeoutMs > 0 ? static_cast<DWORD>(std::min<std::int64_t>(spec.timeoutMs, INFINITE - 1))
                                               : INFINITE;
-        if (::WaitForSingleObject(process.get(), wait) == WAIT_TIMEOUT && !finished) {
+        HANDLE handles[2] = {process.get(), static_cast<HANDLE>(spec.cancelEvent)};
+        const DWORD r = ::WaitForMultipleObjects(spec.cancelEvent ? 2 : 1, handles, FALSE, wait);
+        if (r == WAIT_TIMEOUT && !finished) {
             timedOut = true;
+            ::TerminateJobObject(job.get(), 1);
+        } else if (r == WAIT_OBJECT_0 + 1 && !finished) {
+            cancelled = true;
             ::TerminateJobObject(job.get(), 1);
         }
     });
@@ -193,6 +199,7 @@ Result<ProcessResult> runProcess(const ProcessSpec& spec)
     ::GetExitCodeProcess(process.get(), &code);
     result.exitCode = code;
     result.timedOut = timedOut;
+    result.cancelled = cancelled;
 
     if (callbackFailed)
         return callbackError;

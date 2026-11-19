@@ -59,6 +59,7 @@ void usage()
           << "\nRecuperação\n"
           << "  restore --vault V --job ID --to PASTA [--run R] [--path P]\n"
           << "  restore-db --vault V --job ID --database DB (--target-database NOVO | --to ARQUIVO) [--run R]\n"
+          << "  restore-test --job ID [--vault V] [--database DB]   teste de restauração num banco temporário\n"
           << "  runs --vault V --job ID      dumps --vault V --job ID      verify --vault V --job ID [--sample N]\n"
           << "\nDiagnóstico\n"
           << "  hash <arquivo> [--uncached]   scan <pasta> [--ids]   copy <origem> <destino> [--uncached]\n"

@@ -47,6 +47,29 @@ std::vector<win::TaskDefinition> desiredTasks(const ConfigSet& set, const std::w
         out.push_back(std::move(t));
     }
 
+    // Teste de restauração automático (padrão: domingo, 04:00).
+    for (const auto& job : set.jobs) {
+        if (!job.enabled || job.type != "database" || !job.database.restoreTest)
+            continue;
+        win::TaskDefinition t;
+        t.name = L"restoretest-" + win::fromUtf8(job.id);
+        t.description = win::fromUtf8("Synkro: teste de restauração de " + job.name);
+        t.executable = workerExe;
+        t.arguments = L"restore-test --job " + win::fromUtf8(job.id);
+        if (job.database.restoreTestConfig.schedule) {
+            t.triggers = {*job.database.restoreTestConfig.schedule};
+        } else {
+            ScheduleTrigger weekly;
+            weekly.kind = TriggerKind::Weekly;
+            weekly.days = {7};
+            weekly.atMinutes = 4 * 60;
+            t.triggers = {weekly};
+        }
+        t.startWhenAvailable = set.global.scheduleCatchUp;
+        t.executionTimeLimitSeconds = (job.timeoutSeconds > 0 ? job.timeoutSeconds : set.global.defaultTimeoutSeconds) * 2 + 3600;
+        out.push_back(std::move(t));
+    }
+
     win::TaskDefinition m;
     m.name = L"Maintenance";
     m.description = L"Synkro: aplica a configuração, confere cofres e alertas";
@@ -145,7 +168,8 @@ Result<ApplyReport> applyConfig(const ConfigSet& set, const ApplyOptions& option
         }
         if (auto existing = win::listTasks()) {
             for (const auto& name : existing.value()) {
-                const bool ours = name.rfind(L"job-", 0) == 0 || name == L"Maintenance" || name == L"Scrub";
+                const bool ours = name.rfind(L"job-", 0) == 0 || name.rfind(L"restoretest-", 0) == 0
+                                  || name == L"Maintenance" || name == L"Scrub";
                 if (ours && !names.count(win::foldCase(name)) && win::deleteTask(name))
                     report.done.push_back("tarefa antiga \\Synkro\\" + win::toUtf8(name) + " removida");
             }

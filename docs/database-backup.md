@@ -28,7 +28,7 @@ Regra: em tarefas do tipo `files`, o Synkro **exclui automaticamente** pastas de
 | SQL Server | 2016+ | `BACKUP DATABASE ... WITH COPY_ONLY` | `sqlcmd` / ODBC | 4 |
 | Personalizado | — | Comando definido pelo usuário | qualquer | 2 |
 
-> **Estado da implementação:** PostgreSQL (formatos `custom` e `plain`; `directory` ainda não é suportado), MySQL/MariaDB, SQLite e comando personalizado estão implementados, com guardas, retenção GFS e `restore-db`. Pendentes: a trava no servidor (§4A.3, `remote.server_lock`) — até lá, configure o dump de um servidor compartilhado em uma única máquina — e o teste de restauração automático (§9.1, Fase 4).
+> **Estado da implementação:** PostgreSQL (formatos `custom` e `plain`; `directory` ainda não é suportado), MySQL/MariaDB, SQLite e comando personalizado estão implementados, com guardas, retenção GFS, `restore-db`, trava no servidor (§4A.3) e teste de restauração automático (§9.1, `restore-test`).
 
 O Synkro **não embute** `pg_dump` nem `mysqldump`: usa as ferramentas cliente instaladas na máquina, localizadas automaticamente ou pelo caminho informado no YAML (ver 4.1).
 
@@ -231,7 +231,9 @@ Comandos `custom` sempre executam na máquina do Synkro; se o comando do fornece
 Em empresas com vários PDVs e um servidor central, **apenas uma máquina** deve fazer o dump de cada banco — senão o mesmo banco é exportado várias vezes por noite, sobrecarregando o servidor.
 
 - O assistente pergunta qual máquina será a responsável pelo backup do servidor; nas demais, a tarefa não é criada.
-- **Proteção extra:** antes do dump, o Synkro obtém uma trava **no próprio servidor de banco** (`pg_try_advisory_lock` no PostgreSQL; `GET_LOCK('synkro:<banco>', 0)` no MySQL/MariaDB). Se outra máquina já estiver fazendo o dump, esta execução termina como "ignorada: dump em andamento em <outra máquina>" e não gera dump duplicado.
+- **Proteção extra:** antes do dump, o Synkro obtém uma trava **no próprio servidor de banco** (`pg_try_advisory_lock(hashtext('synkro:<banco>'))` no PostgreSQL, dentro do próprio banco; `GET_LOCK('synkro:<banco>', 0)` no MySQL/MariaDB). Se outra máquina já estiver fazendo o dump, aquele banco é ignorado com um aviso; se todos forem ignorados, a execução termina como "já em andamento" (código de saída 4) e não gera dump duplicado.
+- **Como a trava é segurada:** uma sessão do `psql`/`mysql` fica aberta durante o dump (com `application_name = synkro-lock@<máquina>` no PostgreSQL, visível em `pg_stat_activity`). Ao terminar o dump, o Synkro encerra essa sessão e o servidor solta a trava sozinho — também se o worker morrer, porque o cliente roda no mesmo Job Object. Não há trava "presa" para limpar à mão.
+- `remote.server_lock` vale `true` por padrão quando o host não é local; pode ser ligado também para bancos locais compartilhados.
 - O `.dump.json` e o histórico mostram qual máquina gerou cada dump.
 
 ### 4A.4. Teste de restauração em servidor remoto
@@ -361,12 +363,30 @@ Sem o Synkro, o `restore_hint` do `.dump.json` traz o comando manual. Arquivos `
 
 Um dump só é realmente bom se restaurar. Com `restore_test` habilitado no YAML, o Synkro, na frequência configurada (padrão semanal):
 
-1. pega o dump mais recente de cada banco num dos cofres;
-2. restaura num banco temporário `synkro_verify_<run-id>` (no servidor indicado em `restore_test.connection`, que pode ser o mesmo ou outro);
-3. compara a lista de tabelas e a contagem de linhas com o retrato registrado no momento do dump (exata para tabelas com até `exact_count_max_rows`, estimada acima disso);
-4. executa consultas de verificação opcionais definidas pelo usuário (`checks`);
-5. apaga o banco temporário;
-6. registra o resultado no histórico e no `.dump.json` (`restore_tested_at`). Falha → alerta crítico.
+1. pega o dump válido mais recente de cada banco no primeiro cofre conectado da tarefa (ou no indicado com `--vault`), conferindo o SHA-256;
+2. restaura num banco temporário `synkro_verify_<id>` (no servidor indicado em `restore_test.connection`, que pode ser o mesmo ou outro) — no SQLite, num arquivo temporário com `integrity_check`;
+3. confere se todas as tabelas registradas no dump existem no banco restaurado;
+4. executa as consultas de verificação definidas pelo usuário (`checks`): cada uma precisa devolver verdadeiro (`t`, `true` ou `1`) na primeira coluna;
+5. apaga o banco temporário (`DROP DATABASE IF EXISTS`), também quando a restauração falha no meio;
+6. registra o resultado no `.dump.json` (`restore_test` e `restore_tested_at`, visíveis em `synkro-worker dumps`). Falha → alerta crítico `restore_test_failed`, resolvido no próximo teste bom.
+
+O `config apply` registra a tarefa `\Synkro\restoretest-<tarefa>` no Agendador (padrão: domingo às 04:00, ou `restore_test.schedule`). Para rodar na hora:
+
+```
+synkro-worker restore-test --job pdv-postgres [--vault E:\] [--database pdv_vendas]
+```
+
+```yaml
+restore_test:
+  enabled: true
+  schedule: { weekly: { days: [sun], at: "04:00" } }
+  connection: same            # ou { host, port, user, password: { secret: ... } } de um servidor de teste
+  checks:
+    - name: "há vendas no último mês"
+      sql: "SELECT count(*) > 0 FROM vendas WHERE data >= now() - interval '31 days'"
+```
+
+> A contagem de linhas por tabela (`exact_count_max_rows`) ainda não é comparada: o dump não registra o retrato de linhas no momento da exportação. A conferência é por tabelas e pelas verificações SQL.
 
 ---
 

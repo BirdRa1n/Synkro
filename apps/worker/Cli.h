@@ -62,6 +62,7 @@ int cmdStatus(const QStringList& args);
 int cmdMaintenance(const QStringList& args);
 int cmdSecret(const QStringList& args);
 int cmdRestoreDb(const QStringList& args);
+int cmdRestoreTest(const QStringList& args);
 int cmdDumps(const QStringList& args);
 int cmdSchedule(const QStringList& args);
 int cmdShutdown(const QStringList& args);

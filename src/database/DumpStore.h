@@ -33,6 +33,10 @@ struct DumpRecord {
     bool suspicious = false;      // ex.: muito menor que o anterior
     std::string restoreHint;
     std::string createdByHost;
+    // Último teste de restauração automático (§9.1).
+    QDateTime restoreTestedAt;
+    std::string restoreTestResult;  // ok | failed
+    std::string restoreTestDetail;
 
     QByteArray serialize() const;
     static Result<DumpRecord> parse(const QByteArray& data);

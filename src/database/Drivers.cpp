@@ -78,6 +78,8 @@ auto withRetries(const DumpContext& ctx, Fn&& attempt) -> decltype(attempt())
     return result;
 }
 
+} // namespace
+
 std::vector<std::pair<std::wstring, std::wstring>> pgEnvironment(const Connection& c, const std::wstring& passFile)
 {
     std::vector<std::pair<std::wstring, std::wstring>> env = {
@@ -91,6 +93,8 @@ std::vector<std::pair<std::wstring, std::wstring>> pgEnvironment(const Connectio
         env.emplace_back(L"PGSSLROOTCERT", c.sslCa);
     return env;
 }
+
+namespace {
 
 std::vector<std::string> parsePgRestoreList(const std::string& listing)
 {

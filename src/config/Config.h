@@ -122,6 +122,22 @@ struct DatabaseEntry {
     std::vector<std::string> excludeTables;
 };
 
+struct RestoreCheck {
+    std::string name;
+    std::string sql; // precisa devolver verdadeiro (t, true, 1) na primeira coluna
+};
+
+struct RestoreTestConfig {
+    bool enabled = false;
+    std::optional<ScheduleTrigger> schedule; // padrão: domingo 04:00
+    bool sameConnection = true;
+    std::string host;
+    int port = 0;
+    std::string user;
+    SecretRef password;
+    std::vector<RestoreCheck> checks;
+};
+
 struct DatabaseJob {
     std::string engine;           // postgresql | mysql | mariadb | sqlite | custom
     std::string host;
@@ -153,6 +169,7 @@ struct DatabaseJob {
     bool blockOnMissingTables = false;
     double minSizeRatio = 0.5;
     bool restoreTest = false;
+    RestoreTestConfig restoreTestConfig;
     std::map<std::string, std::string> options; // opções específicas do motor, já validadas
 };
 

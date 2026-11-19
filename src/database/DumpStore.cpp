@@ -68,6 +68,14 @@ QByteArray DumpRecord::serialize() const
     o.insert(QStringLiteral("suspicious"), suspicious);
     o.insert(QStringLiteral("restore_hint"), QString::fromStdString(restoreHint));
     o.insert(QStringLiteral("created_by_host"), QString::fromStdString(createdByHost));
+    if (restoreTestedAt.isValid()) {
+        QJsonObject t;
+        t.insert(QStringLiteral("at"), restoreTestedAt.toUTC().toString(Qt::ISODate));
+        t.insert(QStringLiteral("result"), QString::fromStdString(restoreTestResult));
+        t.insert(QStringLiteral("detail"), QString::fromStdString(restoreTestDetail));
+        o.insert(QStringLiteral("restore_test"), t);
+        o.insert(QStringLiteral("restore_tested_at"), restoreTestedAt.toUTC().toString(Qt::ISODate));
+    }
     return QJsonDocument(o).toJson(QJsonDocument::Indented);
 }
 
@@ -107,6 +115,12 @@ Result<DumpRecord> DumpRecord::parse(const QByteArray& data)
     r.suspicious = o.value(QStringLiteral("suspicious")).toBool();
     r.restoreHint = o.value(QStringLiteral("restore_hint")).toString().toStdString();
     r.createdByHost = o.value(QStringLiteral("created_by_host")).toString().toStdString();
+    const QJsonObject t = o.value(QStringLiteral("restore_test")).toObject();
+    if (!t.isEmpty()) {
+        r.restoreTestedAt = QDateTime::fromString(t.value(QStringLiteral("at")).toString(), Qt::ISODate);
+        r.restoreTestResult = t.value(QStringLiteral("result")).toString().toStdString();
+        r.restoreTestDetail = t.value(QStringLiteral("detail")).toString().toStdString();
+    }
     return r;
 }
 

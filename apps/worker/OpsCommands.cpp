@@ -12,6 +12,7 @@
 #include "database/DatabaseBackup.h"
 #include "database/DatabaseRestore.h"
 #include "database/DumpStore.h"
+#include "database/RestoreTest.h"
 #include "engine/Scrub.h"
 #include "engine/VaultOps.h"
 #include "platform/windows/Locks.h"
@@ -391,6 +392,74 @@ int cmdRestoreDb(const QStringList& args)
     return ExitOk;
 }
 
+int cmdRestoreTest(const QStringList& args)
+{
+    QCommandLineParser p;
+    p.addOption({QStringLiteral("job"), QStringLiteral("Tarefa."), QStringLiteral("id")});
+    p.addOption({QStringLiteral("vault"), QStringLiteral("Cofre (padrão: o primeiro cofre conectado da tarefa)."),
+                 QStringLiteral("disco")});
+    p.addOption({QStringLiteral("database"), QStringLiteral("Só este banco (nome do dump)."), QStringLiteral("nome")});
+    p.addOption({QStringLiteral("config-dir"), QStringLiteral("Pasta de configuração."), QStringLiteral("pasta")});
+    if (!parseSub(p, args) || !p.isSet(QStringLiteral("job")))
+        return (usage(), ExitUsage);
+
+    synkro::config::ConfigSet set;
+    if (!loadAndReport(configDirFrom(p), set, true))
+        return ExitFailure;
+    const std::string jobId = p.value(QStringLiteral("job")).toStdString();
+    const auto* job = set.findJob(jobId);
+    if (!job || job->type != "database") {
+        err() << "tarefa de banco \"" << q(jobId) << "\" não encontrada na configuração" << Qt::endl;
+        return ExitFailure;
+    }
+
+    synkro::db::RestoreTestRequest req;
+    req.jobId = synkro::win::fromUtf8(jobId);
+    req.job = job->database;
+    req.database = p.value(QStringLiteral("database")).toStdString();
+    req.progress = [](const std::string& m) { out() << q(m) << Qt::endl; };
+    if (p.isSet(QStringLiteral("vault"))) {
+        req.vaultLocation = vaultLocationArg(p.value(QStringLiteral("vault")));
+    } else {
+        auto request = synkro::config::makeDatabaseBackupRequest(set, *job);
+        if (request) {
+            for (const auto& v : request.value().vaults) {
+                if (!v.location.empty()) {
+                    req.vaultLocation = v.location;
+                    break;
+                }
+            }
+        }
+        if (req.vaultLocation.empty()) {
+            err() << "nenhum cofre da tarefa está conectado" << Qt::endl;
+            return ExitFailure;
+        }
+    }
+
+    auto state = openState();
+    auto r = synkro::db::runRestoreTest(req);
+    std::string problem;
+    if (!r) {
+        problem = r.error().message;
+        err() << "teste de restauração: " << q(problem) << Qt::endl;
+    } else {
+        for (const auto& item : r.value().items) {
+            out() << (item.ok ? "  [ ok ] " : "  [FALHA] ") << q(item.database) << " (" << q(item.runId) << ") — "
+                  << q(item.detail) << "\n";
+            if (!item.ok && problem.empty())
+                problem = item.database + ": " + item.detail;
+        }
+        out().flush();
+    }
+    if (state) {
+        const std::string key = "restore_test:" + jobId;
+        (void)state->setValue(key, problem.empty() ? std::string() : "o teste de restauração de " + jobId + " falhou — " + problem);
+        (void)state->setValue(key + ":at", QDateTime::currentDateTimeUtc().toString(Qt::ISODate).toStdString());
+        (void)evaluateAlerts(set, *state);
+    }
+    return problem.empty() ? ExitOk : ExitFailure;
+}
+
 int cmdDumps(const QStringList& args)
 {
     QCommandLineParser p;
@@ -407,7 +476,13 @@ int cmdDumps(const QStringList& args)
         out() << q(d.database).leftJustified(18) << " " << d.startedAt.toLocalTime().toString(QStringLiteral("dd/MM/yyyy HH:mm"))
               << "  " << humanBytes(d.size).rightJustified(10) << "  " << q(d.runId) << "  "
               << (d.validationResult == "ok" ? "válido" : "INVÁLIDO") << (d.suspicious ? " · SUSPEITO" : "")
-              << (d.tablesKnown ? QStringLiteral(" · %1 tabela(s)").arg(d.tables.size()) : QString()) << "\n";
+              << (d.tablesKnown ? QStringLiteral(" · %1 tabela(s)").arg(d.tables.size()) : QString())
+              << (d.restoreTestedAt.isValid()
+                      ? QStringLiteral(" · restauração testada em %1: %2")
+                            .arg(d.restoreTestedAt.toLocalTime().toString(QStringLiteral("dd/MM/yyyy HH:mm")),
+                                 d.restoreTestResult == "ok" ? QStringLiteral("ok") : QStringLiteral("FALHOU"))
+                      : QString())
+              << "\n";
     }
     out().flush();
     return ExitOk;

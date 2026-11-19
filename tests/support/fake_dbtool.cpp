@@ -12,6 +12,12 @@
 //   FAKE_PADDING           bytes extras no dump (para testar tamanho)
 //   FAKE_LOG               arquivo onde cada chamada é registrada
 //   FAKE_RESTORE_OUT       arquivo que recebe a entrada padrão do mysql
+//   FAKE_RESTORED_TABLES   tabelas "encontradas" no banco restaurado (padrão: FAKE_TABLES)
+//   FAKE_CHECK_RESULT      resposta das consultas de verificação (padrão: t / 1)
+//
+// A trava no servidor (pg_try_advisory_lock / GET_LOCK) é simulada com um
+// mutex nomeado do Windows: exclusiva entre processos e liberada quando o
+// processo que a segura termina — como a sessão no servidor real.
 
 #include <windows.h>
 
@@ -107,6 +113,43 @@ bool passwordOk(const std::string& credentialFile, const std::vector<std::string
     return readFile(credentialFile).find(expected) != std::string::npos;
 }
 
+std::vector<std::string> values(const std::vector<std::string>& args, const std::string& flag)
+{
+    std::vector<std::string> out;
+    for (size_t i = 0; i + 1 < args.size(); ++i)
+        if (args[i] == flag)
+            out.push_back(args[i + 1]);
+    return out;
+}
+
+// Trava simulada: devolve true se obteve. O mutex fica com o processo.
+bool takeLock(const std::string& sql)
+{
+    const size_t a = sql.find('\'');
+    const size_t b = sql.find('\'', a + 1);
+    std::string name = "fake-synkro-lock-" + (a == std::string::npos ? std::string("x") : sql.substr(a + 1, b - a - 1));
+    for (char& c : name)
+        if (c == ':' || c == '\\')
+            c = '_';
+    HANDLE m = ::CreateMutexA(nullptr, FALSE, ("Local\\" + name).c_str());
+    return m && ::GetLastError() != ERROR_ALREADY_EXISTS;
+}
+
+void holdSession()
+{
+    std::fflush(stdout);
+    ::Sleep(60000); // encerrado pelo Synkro antes disso
+}
+
+std::string restoredTables(const std::vector<std::string>& tables, const std::string& prefix)
+{
+    const std::string explicitList = env("FAKE_RESTORED_TABLES");
+    std::string out;
+    for (const auto& t : explicitList.empty() ? tables : split(explicitList))
+        out += (explicitList.empty() ? prefix : std::string()) + t + "\n";
+    return out;
+}
+
 } // namespace
 
 int wmain(int argc, wchar_t** argv)
@@ -170,6 +213,25 @@ int wmain(int argc, wchar_t** argv)
     if (tool == "psql") {
         if (!value(args, "--file=").empty())
             return 0;
+        const auto cmds = values(args, "-c");
+        if (!cmds.empty() && cmds[0].find("pg_try_advisory_lock") != std::string::npos) {
+            if (!passwordOk(env("PGPASSFILE"), args))
+                return fail("psql: error: password authentication failed", 2);
+            std::printf("%s\n", takeLock(cmds[0]) ? "t" : "f");
+            holdSession();
+            return 0;
+        }
+        if (!cmds.empty() && cmds[0].find("information_schema.tables") != std::string::npos) {
+            std::printf("%s", restoredTables(tables, "public.").c_str());
+            return 0;
+        }
+        if (!cmds.empty() && cmds[0].rfind("DROP DATABASE", 0) == 0)
+            return 0;
+        if (!cmds.empty() && cmds[0].find("pg_database") == std::string::npos) {
+            const std::string r = env("FAKE_CHECK_RESULT");
+            std::printf("%s\n", r.empty() ? "t" : r.c_str());
+            return 0;
+        }
         for (const auto& d : split(env("FAKE_DATABASES")))
             std::printf("%s\n", d.c_str());
         return 0;
@@ -200,6 +262,20 @@ int wmain(int argc, wchar_t** argv)
         }
         if (e.find("CREATE DATABASE `existe`") != std::string::npos)
             return fail("ERROR 1007 (HY000): Can't create database 'existe'; database exists");
+        if (e.find("GET_LOCK") != std::string::npos) {
+            std::printf("%s\n", takeLock(e) ? "1" : "0");
+            holdSession();
+            return 0;
+        }
+        if (e.rfind("SHOW TABLES", 0) == 0) {
+            std::printf("%s", restoredTables(tables, "").c_str());
+            return 0;
+        }
+        if (e.rfind("SELECT", 0) == 0 && !value(args, "--database=").empty()) {
+            const std::string r = env("FAKE_CHECK_RESULT");
+            std::printf("%s\n", r.empty() ? "1" : r.c_str());
+            return 0;
+        }
         if (!e.empty())
             return 0;
         // Restauração: grava a entrada padrão.

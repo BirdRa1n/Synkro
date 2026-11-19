@@ -3,6 +3,8 @@
 #include "database/DatabaseRestore.h"
 #include "database/Drivers.h"
 #include "database/DumpStore.h"
+#include "database/RestoreTest.h"
+#include "database/SqlClient.h"
 #include "database/Sqlite.h"
 #include "database/Tools.h"
 #include "database/Zstd.h"
@@ -49,7 +51,8 @@ struct Env {
         qputenv("FAKE_EXPECT_PASSWORD", kPassword);
         qputenv("FAKE_LOG", QString::fromStdWString(log).toUtf8());
         qputenv("FAKE_TABLES", "clientes,vendas");
-        for (const char* v : {"FAKE_FAIL", "FAKE_TRUNCATE", "FAKE_MYISAM", "FAKE_PADDING", "FAKE_DATABASES"})
+        for (const char* v : {"FAKE_FAIL", "FAKE_TRUNCATE", "FAKE_MYISAM", "FAKE_PADDING", "FAKE_DATABASES",
+                              "FAKE_RESTORED_TABLES", "FAKE_CHECK_RESULT", "FAKE_RESTORE_OUT"})
             qunsetenv(v);
     }
 
@@ -446,6 +449,173 @@ private slots:
             QThread::msleep(1100);
         }
         QCOMPARE(listDumps(vault::JobLayout(env.vaultA, L"pg"), "pdv_vendas").size(), size_t(2));
+    }
+
+    void serverLockIsExclusiveAndReleased()
+    {
+        Env env;
+        auto j = env.job(env.pgJob("remote: { server_lock: true }\n"));
+        QVERIFY(j.database.serverLock);
+        const auto req = env.request(j);
+        SqlTarget target{"postgresql", req.job.tools, Connection{"localhost", 5432, "synkro_backup", kPassword, {}, {}, 15}};
+
+        {
+            // "Outra máquina" segura a trava: o dump é ignorado, nada vai ao cofre.
+            auto other = ServerLock::acquire(target, "pdv_vendas", env.root, 120);
+            QVERIFY2(other.ok(), other.ok() ? "" : other.error().message.c_str());
+            auto second = ServerLock::acquire(target, "pdv_vendas", env.root, 120);
+            QVERIFY(!second.ok());
+            QCOMPARE(second.error().code, ErrorCode::AlreadyExists);
+
+            auto r = runDatabaseBackup(req);
+            QCOMPARE(r.status, RunStatus::AlreadyRunning);
+            QVERIFY(r.error.find("outra máquina") != std::string::npos);
+            QVERIFY(listDumps(vault::JobLayout(env.vaultA, L"pg")).empty());
+        }
+
+        // Trava solta: o dump acontece e a trava é liberada no fim.
+        auto r = runDatabaseBackup(req);
+        QVERIFY2(r.status == RunStatus::Success, describe(r).constData());
+        QVERIFY(readFile(env.log).contains("pg_try_advisory_lock(hashtext('synkro:pdv_vendas'))"));
+        auto after = ServerLock::acquire(target, "pdv_vendas", env.root, 120);
+        QVERIFY2(after.ok(), after.ok() ? "" : after.error().message.c_str());
+        QVERIFY(!readFile(env.log).contains(kPassword));
+    }
+
+    void mysqlServerLock()
+    {
+        Env env;
+        auto j = env.job("version: 1\nid: my\nname: my\ntype: database\nengine: mysql\n"
+                         "connection: { host: 127.0.0.1, user: u, password: { secret: db } }\ndatabases: [retaguarda]\n"
+                         "remote: { server_lock: true }\n");
+        auto r = runDatabaseBackup(env.request(j));
+        QVERIFY2(r.status == RunStatus::Success, describe(r).constData());
+        QVERIFY(readFile(env.log).contains("GET_LOCK('synkro:retaguarda', 0)"));
+    }
+
+    void restoreTestPostgres()
+    {
+        Env env;
+        auto j = env.job(env.pgJob("restore_test:\n  enabled: true\n  checks:\n"
+                                   "    - { name: tem vendas, sql: \"SELECT count(*) > 0 FROM vendas\" }\n"));
+        QVERIFY(j.database.restoreTest);
+        QCOMPARE(j.database.restoreTestConfig.checks.size(), size_t(1));
+        QVERIFY(runDatabaseBackup(env.request(j)).status == RunStatus::Success);
+
+        RestoreTestRequest t;
+        t.vaultLocation = env.vaultA;
+        t.jobId = L"pg";
+        t.job = env.request(j).job;
+        t.secretsFile = env.secrets;
+        t.stagingRoot = env.staging;
+        auto ok = runRestoreTest(t);
+        QVERIFY2(ok.ok(), ok.ok() ? "" : ok.error().message.c_str());
+        QVERIFY2(ok.value().ok(), ok.value().items.front().detail.c_str());
+        QCOMPARE(ok.value().items.front().tablesFound, size_t(2));
+        QCOMPARE(ok.value().items.front().checks.size(), size_t(1));
+        const QByteArray log = readFile(env.log);
+        QVERIFY(log.contains("createdb |") && log.contains("synkro_verify_"));
+        QVERIFY(log.contains("DROP DATABASE IF EXISTS \"synkro_verify_"));
+        auto dumps = listDumps(vault::JobLayout(env.vaultA, L"pg"), "pdv_vendas");
+        QVERIFY(dumps.front().restoreTestedAt.isValid());
+        QCOMPARE(dumps.front().restoreTestResult, std::string("ok"));
+
+        // Tabela que não voltou e verificação falsa: falha, e o temporário é apagado igual.
+        qputenv("FAKE_RESTORED_TABLES", "public.clientes");
+        qputenv("FAKE_CHECK_RESULT", "f");
+        auto bad = runRestoreTest(t);
+        QVERIFY(bad.ok());
+        QVERIFY(!bad.value().ok());
+        const auto& item = bad.value().items.front();
+        QCOMPARE(item.missingTables, std::vector<std::string>{"public.vendas"});
+        QVERIFY(!item.checks.front().ok);
+        QVERIFY(item.detail.find("tem vendas") != std::string::npos);
+        QCOMPARE(readFile(env.log).count("DROP DATABASE IF EXISTS"), 2);
+        QCOMPARE(listDumps(vault::JobLayout(env.vaultA, L"pg"), "pdv_vendas").front().restoreTestResult, std::string("failed"));
+        QVERIFY(ops::listSubdirectories(env.staging).empty());
+    }
+
+    void restoreTestSeparateServer()
+    {
+        Env env;
+        (void)SecretStore(env.secrets).set("teste", kPassword);
+        auto j = env.job(env.pgJob("restore_test:\n  enabled: true\n"
+                                   "  connection: { host: srv-teste, port: 5444, user: verificador, password: { secret: teste } }\n"));
+        QVERIFY(!j.database.restoreTestConfig.sameConnection);
+        QVERIFY(runDatabaseBackup(env.request(j)).status == RunStatus::Success);
+        RestoreTestRequest t;
+        t.vaultLocation = env.vaultA;
+        t.jobId = L"pg";
+        t.job = env.request(j).job;
+        t.secretsFile = env.secrets;
+        t.stagingRoot = env.staging;
+        auto r = runRestoreTest(t);
+        QVERIFY2(r.ok() && r.value().ok(), r.ok() ? r.value().items.front().detail.c_str() : r.error().message.c_str());
+        const QByteArray log = readFile(env.log);
+        QVERIFY(log.contains("createdb | --host=srv-teste | --port=5444 | --username=verificador"));
+    }
+
+    void restoreTestSqlite()
+    {
+        Env env;
+        const std::wstring dbFile = win::joinPath(env.root, L"pdv\\caixa.db");
+        QVERIFY(win::createDirectories(win::parentPath(dbFile)).ok());
+        {
+            auto db = SqliteDb::open(dbFile, SqliteDb::Mode::ReadWriteCreate);
+            QVERIFY(db.ok());
+            QVERIFY(db.value().exec("CREATE TABLE vendas(id INTEGER PRIMARY KEY, total REAL);"
+                                    "INSERT INTO vendas(total) VALUES (10.5),(20.0);").ok());
+        }
+        std::string yml = "version: 1\nid: lite\nname: lite\ntype: database\nengine: sqlite\nsqlite:\n  files: [\""
+                          + win::toUtf8(dbFile) + "\"]\nrestore_test:\n  enabled: true\n  checks:\n"
+                          "    - { name: duas vendas, sql: \"SELECT count(*) = 2 FROM vendas\" }\n"
+                          "    - { name: total certo, sql: \"SELECT sum(total) = 99 FROM vendas\" }\n";
+        for (auto& ch : yml)
+            if (ch == '\\')
+                ch = '/';
+        auto j = env.job(yml);
+        QVERIFY(runDatabaseBackup(env.request(j)).status == RunStatus::Success);
+
+        RestoreTestRequest t;
+        t.vaultLocation = env.vaultA;
+        t.jobId = L"lite";
+        t.job = j.database;
+        t.stagingRoot = env.staging;
+        auto r = runRestoreTest(t);
+        QVERIFY2(r.ok(), r.ok() ? "" : r.error().message.c_str());
+        const auto& item = r.value().items.front();
+        QCOMPARE(item.tablesFound, size_t(1));
+        QVERIFY(item.checks[0].ok);
+        QVERIFY(!item.checks[1].ok); // soma é 30.5
+        QVERIFY(!r.value().ok());
+        QVERIFY(ops::listSubdirectories(env.staging).empty());
+    }
+
+    void restoreTestMysql()
+    {
+        Env env;
+        auto j = env.job("version: 1\nid: my\nname: my\ntype: database\nengine: mysql\n"
+                         "connection: { host: 127.0.0.1, user: u, password: { secret: db } }\ndatabases: [retaguarda]\n"
+                         "restore_test: { enabled: true, checks: [ { name: ok, sql: \"SELECT 1\" } ] }\n");
+        QVERIFY(runDatabaseBackup(env.request(j)).status == RunStatus::Success);
+        qputenv("FAKE_RESTORE_OUT", QString::fromStdWString(win::joinPath(env.root, L"in.sql")).toUtf8());
+        RestoreTestRequest t;
+        t.vaultLocation = env.vaultA;
+        t.jobId = L"my";
+        t.job = env.request(j).job;
+        t.secretsFile = env.secrets;
+        t.stagingRoot = env.staging;
+        auto r = runRestoreTest(t);
+        QVERIFY2(r.ok() && r.value().ok(), r.ok() ? r.value().items.front().detail.c_str() : r.error().message.c_str());
+        QVERIFY(readFile(env.log).contains("DROP DATABASE IF EXISTS `synkro_verify_"));
+    }
+
+    void verifyNames()
+    {
+        QCOMPARE(verifyDatabaseName(L"r-20261118-220000-8f3a"), std::string("synkro_verify_20261118_220000_8f3a"));
+        QVERIFY(isTruthy("t") && isTruthy(" TRUE\n") && isTruthy("1") && !isTruthy("f") && !isTruthy("0") && !isTruthy(""));
+        QCOMPARE(quoteIdentifier("mysql", "a`b"), std::string("`a``b`"));
+        QCOMPARE(quoteIdentifier("postgresql", "a\"b"), std::string("\"a\"\"b\""));
     }
 };
 

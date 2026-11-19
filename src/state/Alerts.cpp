@@ -205,6 +205,13 @@ std::vector<AlertRow> refreshAlerts(const config::ConfigSet& set, StateStore& st
     const std::string scrub = state.getValue("scrub_problems");
     if (!scrub.empty())
         desired.push_back({"scrub_problems", "cofres", AlertSeverity::Critical, scrub, {}, {}});
+    for (const auto& job : set.jobs) {
+        if (job.type != "database" || !job.database.restoreTest)
+            continue;
+        const std::string failed = state.getValue("restore_test:" + job.id);
+        if (!failed.empty())
+            desired.push_back({"restore_test_failed", job.id, AlertSeverity::Critical, failed, {}, {}});
+    }
     auto ev = reconcileAlerts(state, desired);
     if (!ev)
         return desired;

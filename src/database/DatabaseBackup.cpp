@@ -4,6 +4,7 @@
 #include "core/RunId.h"
 #include "database/Drivers.h"
 #include "database/DumpStore.h"
+#include "database/SqlClient.h"
 #include "database/Tools.h"
 #include "engine/RunSummary.h"
 #include "engine/VaultOps.h"
@@ -233,11 +234,41 @@ BackupResult runDatabaseBackup(const DatabaseBackupRequest& req)
             for (const auto& n : listed.value())
                 dbs.push_back({n, {}});
         }
+        // Trava no servidor (§4A.3): segura durante o dump de cada banco.
+        SqlTarget lockTarget{job.engine, job.tools, conn};
+        const std::int64_t hold = ctx.timeoutSeconds * (ctx.retries + 1) + 600;
+        std::size_t skipped = 0;
         for (const auto& db : dbs) {
+            std::unique_ptr<ServerLock> held;
+            if (job.serverLock) {
+                say("pedindo a trava no servidor para " + db.name + "...");
+                auto l = ServerLock::acquire(lockTarget, db.name, ctx.workDir, hold);
+                if (!l) {
+                    if (l.error().code == ErrorCode::AlreadyExists) {
+                        ++skipped;
+                        result.warnings.push_back(db.name + ": ignorado — " + l.error().message);
+                    } else {
+                        PlannedArtifact p;
+                        p.database = db.name;
+                        p.error = "trava no servidor: " + l.error().message;
+                        planned.push_back(std::move(p));
+                    }
+                    continue;
+                }
+                held = std::move(l).value();
+            }
             if (job.engine == "postgresql")
                 dumpOne(db.name, [&] { return dumpPostgres(job, conn, db, ctx); });
             else
                 dumpOne(db.name, [&] { return dumpMysql(job, conn, db.name, ctx); });
+        }
+        wipe(lockTarget.connection.password);
+        if (skipped > 0 && planned.empty()) {
+            wipe(conn.password);
+            result.status = RunStatus::AlreadyRunning;
+            result.error = "dump em andamento em outra máquina (trava no servidor); nada foi gerado nesta execução";
+            runHooks(req.hooks.after, "after", vars, result.hooks);
+            return result;
         }
         if (job.engine == "postgresql" && job.options.count("include_globals") && job.options.at("include_globals") == "true")
             dumpOne("_globals", [&] { return dumpPostgresGlobals(job, conn, ctx); });

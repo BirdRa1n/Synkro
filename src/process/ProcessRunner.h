@@ -31,6 +31,10 @@ struct ProcessSpec {
     // Uma falha interrompe o processo.
     std::function<Status(const char* data, std::size_t size)> onStdout;
 
+    // Evento do Windows (HANDLE) que, sinalizado, encerra o processo — usado
+    // por processos de longa duração como a trava no servidor de banco.
+    void* cancelEvent = nullptr;
+
     std::size_t maxCapturedStdout = 1u << 20; // quando onStdout não é usado
     std::size_t maxCapturedStderr = 64u << 10;
 };
@@ -38,6 +42,7 @@ struct ProcessSpec {
 struct ProcessResult {
     unsigned long exitCode = 0;
     bool timedOut = false;
+    bool cancelled = false; // encerrado por cancelEvent
     std::string stdoutText; // vazio quando onStdout é usado
     std::string stderrText; // últimos bytes de stderr (limitado)
 };

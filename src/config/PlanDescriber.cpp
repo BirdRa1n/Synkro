@@ -158,6 +158,26 @@ void describeDatabase(std::ostringstream& o, const ConfigSet& set, const JobConf
       << ".\n";
     o << "  • Dump menor que " << describePercent(d.minSizeRatio)
       << " do anterior: alerta crítico e nenhum dump antigo é apagado.\n";
+    if (d.serverLock && d.engine != "sqlite" && d.engine != "custom")
+        o << "  • Trava no servidor (" << (d.engine == "postgresql" ? "pg_try_advisory_lock" : "GET_LOCK")
+          << "): se outra máquina já estiver exportando o mesmo banco, este dump é ignorado.\n";
+
+    if (d.restoreTest) {
+        const auto& rt = d.restoreTestConfig;
+        o << "\nTESTE DE RESTAURAÇÃO\n";
+        o << "  " << (rt.schedule ? describeTrigger(*rt.schedule) : std::string("Toda semana, domingo às 04:00"))
+          << ": restaura o dump mais recente de cada banco ";
+        if (d.engine == "sqlite")
+            o << "num arquivo temporário";
+        else
+            o << "num banco temporário synkro_verify_<id> em "
+              << (rt.sameConnection ? d.host + ":" + std::to_string(d.port) + " (o mesmo servidor)"
+                                    : rt.host + ":" + std::to_string(rt.port) + " (servidor de teste)");
+        o << ", confere as tabelas registradas no dump";
+        if (!rt.checks.empty())
+            o << ", roda " << rt.checks.size() << " verificação(ões)";
+        o << " e apaga o temporário. Falha abre alerta crítico.\n";
+    }
 }
 
 // Recursos configurados que esta versão ainda não executa. O plano precisa
@@ -165,11 +185,8 @@ void describeDatabase(std::ostringstream& o, const ConfigSet& set, const JobConf
 std::vector<std::string> pendingFeatures(const JobConfig& job)
 {
     std::vector<std::string> out;
-    if (job.type == "database" && job.database.serverLock && job.database.remote)
-        out.push_back("a trava no servidor contra dumps simultâneos de outras máquinas (remote.server_lock); "
-                      "até lá, configure o dump do servidor em uma única máquina");
-    if (job.type == "database" && job.database.restoreTest)
-        out.push_back("o teste de restauração automático (restore_test, previsto para a Fase 4)");
+    if (job.type == "database" && job.database.restoreTest && job.database.engine == "custom")
+        out.push_back("o teste de restauração automático para comandos personalizados (use restore-db manualmente)");
     return out;
 }
 

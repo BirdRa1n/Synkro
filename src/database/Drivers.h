@@ -63,6 +63,9 @@ std::vector<std::wstring> mysqldumpArgs(const std::wstring& tool, const std::wst
 
 std::string mysqlDefaultsFile(const Connection& c, const std::string& engine);
 
+// Ambiente dos clientes do PostgreSQL (PGPASSFILE, PGSSLMODE...).
+std::vector<std::pair<std::wstring, std::wstring>> pgEnvironment(const Connection& c, const std::wstring& passFile);
+
 // ---- Dumps -----------------------------------------------------------------
 
 // Lista os bancos do servidor (databases: all).

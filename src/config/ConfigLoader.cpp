@@ -905,8 +905,10 @@ void parseDatabaseJob(Reader& r, const YAML::Node& doc, JobConfig& job)
         if (r.requireMap(rt, "restore_test")) {
             r.checkKeys(rt, "restore_test", {"enabled", "schedule", "connection", "exact_count_max_rows", "checks"});
             d.restoreTest = r.boolean(rt, "enabled", "restore_test").value_or(false);
+            auto& rtc = d.restoreTestConfig;
+            rtc.enabled = d.restoreTest;
             if (const YAML::Node s = rt["schedule"])
-                (void)r.trigger(s, "restore_test.schedule");
+                rtc.schedule = r.trigger(s, "restore_test.schedule");
             if (const YAML::Node c = rt["connection"]) {
                 if (c.IsScalar() && c.Scalar() == "same") {
                     if (d.remote)
@@ -914,7 +916,18 @@ void parseDatabaseJob(Reader& r, const YAML::Node& doc, JobConfig& job)
                                "teste de restauração no servidor de produção remoto; prefira um servidor de teste");
                 } else if (r.requireMap(c, "restore_test.connection")) {
                     r.checkKeys(c, "restore_test.connection", {"host", "port", "user", "password"});
-                    (void)r.secret(c, "password", "restore_test.connection");
+                    rtc.sameConnection = false;
+                    rtc.host = r.str(c, "host", "restore_test.connection", true).value_or("");
+                    rtc.port = static_cast<int>(r.integer(c, "port", "restore_test.connection", 1, 65535)
+                                                    .value_or(d.engine == "postgresql" ? 5432 : 3306));
+                    rtc.user = r.str(c, "user", "restore_test.connection", true).value_or("");
+                    rtc.password = r.secret(c, "password", "restore_test.connection");
+                }
+            }
+            if (const YAML::Node checks = rt["checks"]; checks && checks.IsSequence()) {
+                for (const auto& ck : checks) {
+                    if (ck.IsMap() && ck["sql"])
+                        rtc.checks.push_back({ck["name"] ? ck["name"].Scalar() : std::string("verificação"), ck["sql"].Scalar()});
                 }
             }
             (void)r.integer(rt, "exact_count_max_rows", "restore_test", 0, 1'000'000'000'000LL);

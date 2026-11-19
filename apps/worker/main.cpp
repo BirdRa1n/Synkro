@@ -398,7 +398,7 @@ int main(int argc, char* argv[])
     static const std::pair<const char*, Handler> commands[] = {
         {"hash", cmdHash},         {"scan", cmdScan},           {"copy", cmdCopy},
         {"vault", cmdVault},       {"backup", cmdBackup},       {"restore", cmdRestore},
-        {"restore-db", cmdRestoreDb}, {"verify", cmdVerify},    {"runs", cmdRuns},
+        {"restore-db", cmdRestoreDb}, {"restore-test", cmdRestoreTest}, {"verify", cmdVerify},    {"runs", cmdRuns},
         {"dumps", cmdDumps},       {"config", cmdConfig},       {"secret", cmdSecret},
         {"status", cmdStatus},     {"maintenance", cmdMaintenance}, {"schedule", cmdSchedule},
         {"shutdown", cmdShutdown},

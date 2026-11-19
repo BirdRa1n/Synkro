@@ -228,6 +228,21 @@ private slots:
         QVERIFY(xml.contains("<UserId>S-1-5-18</UserId><RunLevel>HighestAvailable</RunLevel>"));
         QVERIFY(xml.contains("<StartWhenAvailable>true</StartWhenAvailable>"));
         QVERIFY(xml.contains("<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>"));
+
+        // Teste de restauração agendado à parte (padrão: domingo 04:00).
+        QVERIFY(writeFile(win::joinPath(env.cfg, L"jobs\\banco.yml"),
+                          "version: 1\nid: banco\nname: Banco\ntype: database\nengine: sqlite\n"
+                          "sqlite: { files: [\"C:/PDV/caixa.db\"] }\nrestore_test: { enabled: true }\n"));
+        const ConfigSet withDb = env.load();
+        QVERIFY2(!withDb.hasErrors(), qPrintable(dump(withDb)));
+        const auto all = desiredTasks(withDb, L"w.exe");
+        auto rt = std::find_if(all.begin(), all.end(), [](const auto& t) { return t.name == L"restoretest-banco"; });
+        QVERIFY(rt != all.end());
+        QCOMPARE(rt->arguments, std::wstring(L"restore-test --job banco"));
+        QCOMPARE(rt->triggers.size(), size_t(1));
+        QCOMPARE(rt->triggers[0].kind, TriggerKind::Weekly);
+        QCOMPARE(rt->triggers[0].days, std::vector<int>{7});
+        QCOMPARE(rt->triggers[0].atMinutes, 240);
         QCOMPARE(tasks[1].name, std::wstring(L"Maintenance"));
         QCOMPARE(tasks[2].arguments, std::wstring(L"maintenance --scrub"));
     }

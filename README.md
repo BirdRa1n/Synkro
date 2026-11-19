@@ -34,8 +34,11 @@ Backup incremental, versionado e redundante para dados críticos no Windows, com
 | Estado local, alertas (backup atrasado, cofre ausente, pouco espaço, falhas) e Visualizador de Eventos | ✅ |
 | Verificação periódica com reparo a partir de outro cofre (`maintenance --scrub`) | ✅ |
 | Desligamento seguro após sucesso, com contagem regressiva e cancelamento | ✅ |
-| Trava no servidor contra dumps simultâneos (`remote.server_lock`), migração para MSVC | pendente |
-| Teste de restauração automático de dumps, Firebird e SQL Server | Fase 4 |
+| Saúde dos discos (SMART via WMI) na checagem do cofre, nos alertas e no painel | ✅ |
+| Trava no servidor contra dumps simultâneos de várias máquinas (`remote.server_lock`) | ✅ |
+| Teste de restauração automático em banco temporário, com verificações SQL (`restore_test`, `restore-test`) | ✅ |
+| Firebird e SQL Server | Fase 4 |
+| Migração para MSVC | pendente |
 | Interface desktop: painel, tarefas, cofres, histórico, restauração e configurações; tema claro/escuro/sistema; bandeja com alertas | ✅ |
 | Assistente de tarefas com teste de conexão, editor YAML com validação ao vivo, cadastro de discos com checagem | ✅ |
 | Instalador MSI assinado e início automático na bandeja | Fase 4 |
