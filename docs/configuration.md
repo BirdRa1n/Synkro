@@ -594,7 +594,26 @@ DEPOIS
 
 ## 12. Exportar e importar
 
-- `synkro-worker config export --out pdv-matriz.zip` — todos os YAMLs, **sem** segredos e sem `vault_id`s (que são específicos dos discos).
-- `synkro-worker config import pdv-matriz.zip` — importa em outro PDV; o desktop pede para associar os cofres e cadastrar os segredos que faltam.
+Útil para padronizar a configuração em várias lojas: configure um PDV, exporte e importe nos demais.
 
-Útil para padronizar a configuração em várias lojas.
+```
+synkro-worker config export --to pdv-matriz.yml [--jobs pdv-postgres,pdv-arquivos]
+synkro-worker config import --from pdv-matriz.yml --bind hd-externo-1=E: --bind hd-interno-2=F: [--dry-run] [--replace]
+```
+
+**O pacote** é um único arquivo YAML com vários documentos: um cabeçalho (máquina de origem, data, segredos necessários e os papéis dos cofres) e um documento por arquivo de configuração. Pode ser lido e conferido num editor de texto.
+
+- As tarefas vão **intactas**, com comentários.
+- O `synkro.yml` vai **sem `vault_id` e sem `path`**: a identidade dos discos é de cada máquina.
+- **Nunca leva senhas**: a configuração só referencia segredos pelo nome (`password: { secret: pg-pdv }`), e o cabeçalho lista quais precisam ser cadastrados no destino.
+
+**A importação:**
+
+1. liga cada cofre do pacote a um disco desta máquina com `--bind <id>=<disco>` (o disco precisa já ter sido preparado como cofre — `vault init` ou pelo desktop; a identidade é lida do `vault.json`);
+2. se a máquina **não tem** `synkro.yml`, ele é criado a partir do pacote; cofres não usados pelas tarefas importadas e não ligados ficam de fora, com aviso;
+3. se a máquina **já tem** `synkro.yml`, ele é mantido; cofres que as tarefas importadas citam e que não existem nele são acrescentados (com `--bind`) só se o arquivo foi gerado pelo desktop — um `synkro.yml` editado à mão nunca é regravado, e a importação pede que você acrescente os cofres nele;
+4. tarefas que já existem com o mesmo conteúdo são mantidas; com conteúdo diferente, só são substituídas com `--replace`;
+5. **monta o resultado numa pasta temporária e valida tudo** (como o `config validate`); se houver qualquer erro, nada é alterado;
+6. lista os segredos que faltam (`synkro-worker secret set <nome>`) e lembra de aplicar com `config apply` (a tarefa de manutenção também aplica sozinha em até 15 minutos).
+
+`--dry-run` faz tudo até a validação e mostra o que seria gravado, sem gravar.

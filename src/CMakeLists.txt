@@ -39,6 +39,8 @@ add_library(synkro_core STATIC
     database/Drivers.cpp
     database/DumpStore.h
     database/DumpStore.cpp
+    config/ConfigPackage.h
+    config/ConfigPackage.cpp
     database/RestoreTest.h
     database/RestoreTest.cpp
     database/Sqlite.h

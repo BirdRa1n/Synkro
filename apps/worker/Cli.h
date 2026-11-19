@@ -67,5 +67,6 @@ int cmdDumps(const QStringList& args);
 int cmdSchedule(const QStringList& args);
 int cmdShutdown(const QStringList& args);
 int cmdConfigApply(const QStringList& args);
+int cmdConfigPackage(const QString& sub, const QStringList& args); // export | import
 
 } // namespace cli

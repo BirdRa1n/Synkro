@@ -5,6 +5,7 @@
 
 #include "config/ConfigApply.h"
 #include "config/ConfigLoader.h"
+#include "config/ConfigPackage.h"
 #include "config/JobRequest.h"
 #include "config/ShutdownPolicy.h"
 #include "config/Values.h"
@@ -458,6 +459,92 @@ int cmdRestoreTest(const QStringList& args)
         (void)evaluateAlerts(set, *state);
     }
     return problem.empty() ? ExitOk : ExitFailure;
+}
+
+int cmdConfigPackage(const QString& sub, const QStringList& args)
+{
+    QCommandLineParser p;
+    p.addOption({QStringLiteral("config-dir"), QStringLiteral("Pasta de configuração."), QStringLiteral("pasta")});
+    p.addOption({QStringLiteral("to"), QStringLiteral("Arquivo do pacote a gerar."), QStringLiteral("arquivo")});
+    p.addOption({QStringLiteral("from"), QStringLiteral("Pacote a importar."), QStringLiteral("arquivo")});
+    p.addOption({QStringLiteral("jobs"), QStringLiteral("Só estas tarefas (separadas por vírgula)."), QStringLiteral("ids")});
+    p.addOption({QStringLiteral("bind"), QStringLiteral("Liga um cofre do pacote a um disco: id=E:\\"), QStringLiteral("id=disco")});
+    p.addOption({QStringLiteral("replace"), QStringLiteral("Substitui tarefas que já existem.")});
+    p.addOption({QStringLiteral("dry-run"), QStringLiteral("Só valida e mostra o que seria feito.")});
+    if (!parseSub(p, args))
+        return (usage(), ExitUsage);
+    const std::wstring dir = configDirFrom(p);
+
+    if (sub == QLatin1String("export")) {
+        if (!p.isSet(QStringLiteral("to")))
+            return (usage(), ExitUsage);
+        synkro::config::ConfigSet set;
+        if (!loadAndReport(dir, set, true))
+            return ExitFailure;
+        std::vector<std::string> ids;
+        for (const auto& id : p.value(QStringLiteral("jobs")).split(',', Qt::SkipEmptyParts))
+            ids.push_back(id.trimmed().toStdString());
+        auto pkg = synkro::config::exportPackage(set, ids);
+        if (!pkg)
+            return fail(pkg.error());
+        const std::wstring to = nativeArg(p.value(QStringLiteral("to")));
+        if (auto st = synkro::win::writeFileAtomically(to, pkg.value()); !st)
+            return fail(st.error());
+        auto parsed = synkro::config::parsePackage(pkg.value());
+        out() << "pacote gravado em " << q(to) << ": " << (parsed ? parsed.value().files.size() - 1 : 0)
+              << " tarefa(s), sem senhas e sem a identidade dos discos" << Qt::endl;
+        if (parsed && !parsed.value().secrets.empty()) {
+            out() << "na máquina de destino, cadastre os segredos:";
+            for (const auto& s : parsed.value().secrets)
+                out() << " " << q(s);
+            out() << Qt::endl;
+        }
+        return ExitOk;
+    }
+
+    if (!p.isSet(QStringLiteral("from")))
+        return (usage(), ExitUsage);
+    auto data = synkro::win::readWholeFile(nativeArg(p.value(QStringLiteral("from"))), 16u << 20);
+    if (!data)
+        return fail(data.error());
+    auto pkg = synkro::config::parsePackage(data.value());
+    if (!pkg)
+        return fail(pkg.error());
+    synkro::config::ImportOptions opt;
+    opt.configDir = dir;
+    opt.replaceJobs = p.isSet(QStringLiteral("replace"));
+    opt.dryRun = p.isSet(QStringLiteral("dry-run"));
+    for (const auto& b : p.values(QStringLiteral("bind"))) {
+        const int eq = b.indexOf('=');
+        if (eq <= 0) {
+            err() << "--bind espera id=disco (ex.: hd-externo-1=E:\\)" << Qt::endl;
+            return ExitUsage;
+        }
+        opt.bindings[b.left(eq).trimmed().toStdString()] = vaultLocationArg(b.mid(eq + 1).trimmed());
+    }
+    out() << "pacote de " << q(pkg.value().exportedFrom) << " (" << q(pkg.value().exportedAt) << ")" << Qt::endl;
+    auto r = synkro::config::importPackage(pkg.value(), opt);
+    if (!r)
+        return fail(r.error());
+    const auto& rep = r.value();
+    for (const auto& w : rep.written)
+        out() << (opt.dryRun ? "  gravaria  " : "  gravado   ") << q(w) << "\n";
+    for (const auto& k : rep.kept)
+        out() << "  mantido   " << q(k) << "\n";
+    for (const auto& w : rep.warnings)
+        out() << "  aviso     " << q(w) << "\n";
+    for (const auto& d : rep.diagnostics)
+        if (d.severity == synkro::config::Severity::Warning)
+            out() << "  ⚠ " << q(synkro::config::formatDiagnostic(d)) << "\n";
+    if (!rep.missingSecrets.empty()) {
+        out() << "\nsegredos a cadastrar nesta máquina (como administrador):\n";
+        for (const auto& s : rep.missingSecrets)
+            out() << "  synkro-worker secret set " << q(s) << "\n";
+    }
+    if (!opt.dryRun && !rep.written.empty())
+        out() << "\nconfiguração importada; aplique com: synkro-worker config apply" << "\n";
+    out().flush();
+    return ExitOk;
 }
 
 int cmdDumps(const QStringList& args)

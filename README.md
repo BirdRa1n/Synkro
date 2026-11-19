@@ -38,6 +38,7 @@ Backup incremental, versionado e redundante para dados críticos no Windows, com
 | Trava no servidor contra dumps simultâneos de várias máquinas (`remote.server_lock`) | ✅ |
 | Teste de restauração automático em banco temporário, com verificações SQL (`restore_test`, `restore-test`) | ✅ |
 | Firebird (`gbak`) e SQL Server (`BACKUP ... COPY_ONLY, CHECKSUM`), com restauração e teste de restauração | ✅ |
+| Exportar/importar a configuração entre PDVs, sem senhas nem identidade dos discos (`config export` / `config import`) | ✅ |
 | Migração para MSVC | pendente |
 | Interface desktop: painel, tarefas, cofres, histórico, restauração e configurações; tema claro/escuro/sistema; bandeja com alertas | ✅ |
 | Assistente de tarefas com teste de conexão, editor YAML com validação ao vivo, cadastro de discos com checagem | ✅ |

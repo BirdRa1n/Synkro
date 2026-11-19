@@ -1,9 +1,12 @@
 #include "config/ConfigApply.h"
 #include "config/ConfigLoader.h"
+#include "config/ConfigPackage.h"
+#include "config/ConfigWriter.h"
 #include "config/JobRequest.h"
 #include "config/ShutdownPolicy.h"
 #include "engine/BackupEngine.h"
 #include "engine/Scrub.h"
+#include "engine/VaultOps.h"
 #include "engine/Verify.h"
 #include "platform/windows/TaskScheduler.h"
 #include "state/Alerts.h"
@@ -203,6 +206,118 @@ private slots:
         dependent.dependsOn = {"arquivos"};
         set.jobs.push_back(dependent);
         QVERIFY(!decideShutdown(set, job, RunStatus::Success, false).shutdown);
+    }
+
+    void configPackageRoundTrip()
+    {
+        Setup env("# comentário que precisa sobreviver\n");
+        const ConfigSet set = env.load();
+        QVERIFY2(!set.hasErrors(), qPrintable(dump(set)));
+        auto pkg = exportPackage(set);
+        QVERIFY2(pkg.ok(), pkg.ok() ? "" : pkg.error().message.c_str());
+        const QByteArray text = QByteArray::fromStdString(pkg.value());
+        QVERIFY(text.contains("kind: synkro-config-package"));
+        QVERIFY(!text.contains(env.idA.toUtf8()) && !text.contains(env.idB.toUtf8())); // sem identidade dos discos
+        QVERIFY(text.contains("# comentário que precisa sobreviver"));
+
+        auto parsed = parsePackage(pkg.value());
+        QVERIFY(parsed.ok());
+        QCOMPARE(parsed.value().files.size(), size_t(2)); // synkro.yml + 1 tarefa
+        QCOMPARE(parsed.value().vaults.size(), size_t(2));
+
+        // Máquina nova: sem --bind, nada é gravado e a mensagem diz o que ligar.
+        const std::wstring other = win::joinPath(env.root, L"outra-maquina");
+        ImportOptions opt;
+        opt.configDir = other;
+        opt.checkPhysicalDisks = false;
+        auto unbound = importPackage(parsed.value(), opt);
+        QVERIFY(!unbound.ok());
+        QVERIFY(unbound.error().message.find("--bind") != std::string::npos);
+        QVERIFY(!exists(win::joinPath(other, L"synkro.yml")));
+
+        // Com os discos ligados: dry-run não grava; a importação grava e valida.
+        opt.bindings = {{"a", env.a}, {"b", env.b}};
+        opt.dryRun = true;
+        auto dry = importPackage(parsed.value(), opt);
+        QVERIFY2(dry.ok(), dry.ok() ? "" : dry.error().message.c_str());
+        QCOMPARE(dry.value().written.size(), size_t(2));
+        QVERIFY(!exists(win::joinPath(other, L"synkro.yml")));
+        opt.dryRun = false;
+        auto done = importPackage(parsed.value(), opt);
+        QVERIFY2(done.ok(), done.ok() ? "" : done.error().message.c_str());
+        QVERIFY(readFile(win::joinPath(other, L"synkro.yml")).contains(env.idA.toUtf8()));
+        QCOMPARE(readFile(win::joinPath(other, L"jobs\\arquivos.yml")), readFile(win::joinPath(env.cfg, L"jobs\\arquivos.yml")));
+        LoadOptions lo;
+        lo.checkPhysicalDisks = false;
+        lo.checkSecrets = false;
+        const ConfigSet imported = loadConfig(other, lo);
+        QVERIFY2(!imported.hasErrors(), qPrintable(dump(imported)));
+        QCOMPARE(imported.global.vaults.size(), size_t(2));
+        QVERIFY(ops::listSubdirectories(env.root).size() > 0);
+        for (const auto& d : ops::listSubdirectories(env.root))
+            QVERIFY2(d.find(L".import-") == std::wstring::npos, "pasta temporária da importação ficou para trás");
+
+        // De novo: nada muda. Tarefa alterada só é substituída com --replace.
+        auto again = importPackage(parsed.value(), opt);
+        QVERIFY(again.ok() && again.value().written.empty());
+        ConfigPackage changed = parsed.value();
+        changed.files[1].content += "# versão nova\n";
+        auto keep = importPackage(changed, opt);
+        QVERIFY(keep.ok() && keep.value().written.empty());
+        QVERIFY(!readFile(win::joinPath(other, L"jobs\\arquivos.yml")).contains("versão nova"));
+        opt.replaceJobs = true;
+        auto replaced = importPackage(changed, opt);
+        QVERIFY(replaced.ok() && replaced.value().written.size() == 1);
+        QVERIFY(readFile(win::joinPath(other, L"jobs\\arquivos.yml")).contains("versão nova"));
+
+        // Resultado inválido: nada é alterado.
+        ConfigPackage broken = parsed.value();
+        broken.files[1].content = "version: 1\nid: arquivos\nname: x\ntype: files\n"; // sem source
+        auto bad = importPackage(broken, opt);
+        QVERIFY(!bad.ok());
+        QVERIFY(bad.error().message.find("nada foi alterado") != std::string::npos);
+        QVERIFY(readFile(win::joinPath(other, L"jobs\\arquivos.yml")).contains("versão nova"));
+
+        // Caminhos fora da configuração são recusados.
+        QVERIFY(!parsePackage("kind: synkro-config-package\nversion: 1\n---\nfile: ../../Windows/x.yml\ncontent: x\n").ok());
+        QVERIFY(!parsePackage("version: 1\nid: x\n").ok());
+    }
+
+    void configImportKeepsHandEditedGlobal()
+    {
+        Setup env;
+        const ConfigSet set = env.load();
+        auto parsed = parsePackage(exportPackage(set).value());
+        QVERIFY(parsed.ok());
+        // A tarefa do pacote passa a citar um cofre "c" que a máquina de destino não tem.
+        ConfigPackage pkg = parsed.value();
+        pkg.files[1].content += "vaults: [a, c]\n";
+        std::vector<Diagnostic> ignored;
+        GlobalConfig g = parseGlobalDocument(pkg.files[0].content, L"synkro.yml", ignored);
+        g.vaults.push_back({"c", "", "Disco C", L"", false, 7 * 86400, 0.15});
+        pkg.files[0].content = emitGlobal(g);
+
+        const std::wstring c = win::joinPath(env.root, L"discoC");
+        QVERIFY(win::createDirectories(c).ok());
+        QVERIFY(vault::initialize(c, QStringLiteral("C")).ok());
+
+        ImportOptions opt;
+        opt.configDir = env.cfg; // synkro.yml existente, escrito à mão
+        opt.checkPhysicalDisks = false;
+        opt.replaceJobs = true;
+        auto missing = importPackage(pkg, opt);
+        QVERIFY(!missing.ok());
+        QVERIFY2(missing.error().message.find("não existem nesta máquina: c") != std::string::npos, missing.error().message.c_str());
+        opt.bindings = {{"c", c}};
+        auto handEdited = importPackage(pkg, opt);
+        QVERIFY(!handEdited.ok());
+        QVERIFY(handEdited.error().message.find("editado à mão") != std::string::npos);
+
+        // synkro.yml gerado pelo desktop: o cofre novo é acrescentado.
+        QVERIFY(writeFile(win::joinPath(env.cfg, L"synkro.yml"), QByteArray::fromStdString(emitGlobal(set.global))));
+        auto added = importPackage(pkg, opt);
+        QVERIFY2(added.ok(), added.ok() ? "" : added.error().message.c_str());
+        QVERIFY(readFile(win::joinPath(env.cfg, L"synkro.yml")).contains("id: c"));
     }
 
     void taskXml()

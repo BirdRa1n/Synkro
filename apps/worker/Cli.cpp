@@ -48,6 +48,8 @@ void usage()
           << "  vault show <disco>                                   mostra a identidade do cofre\n"
           << "\nConfiguração\n"
           << "  config validate | plan [--job ID] | apply [--no-tasks]   [--config-dir D]\n"
+          << "  config export --to PACOTE.yml [--jobs a,b]   pacote sem senhas e sem a identidade dos discos\n"
+          << "  config import --from PACOTE.yml [--bind ID=DISCO]... [--replace] [--dry-run]\n"
           << "  secret set <nome> [--stdin] | list | delete <nome>\n"
           << "  schedule show --job ID                               XML da tarefa no Agendador\n"
           << "\nExecução\n"

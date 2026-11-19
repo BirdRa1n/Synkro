@@ -37,6 +37,8 @@ int cmdConfig(const QStringList& args)
     const QString sub = args.first();
     if (sub == QLatin1String("apply"))
         return cmdConfigApply(args.mid(1));
+    if (sub == QLatin1String("export") || sub == QLatin1String("import"))
+        return cmdConfigPackage(sub, args.mid(1));
 
     QCommandLineParser p;
     p.addOption({QStringLiteral("config-dir"), QStringLiteral("Pasta de configuração."), QStringLiteral("pasta")});
