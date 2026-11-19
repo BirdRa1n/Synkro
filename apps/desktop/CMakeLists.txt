@@ -1,12 +1,25 @@
+find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Concurrent Svg)
+
 qt_add_executable(synkro-desktop
     main.cpp
-    mainwindow.cpp
-    mainwindow.h
-    mainwindow.ui
+    AppContext.h AppContext.cpp
+    Dialogs.h Dialogs.cpp
+    Format.h
+    Icons.h Icons.cpp
+    MainWindow.h MainWindow.cpp
+    Pages.h
+    DashboardPage.cpp
+    HistoryPage.cpp
+    JobsPage.cpp
+    RestorePage.cpp
+    SettingsPage.cpp
+    VaultsPage.cpp
+    Theme.h Theme.cpp
+    Ui.h Ui.cpp
 )
 
 set_target_properties(synkro-desktop PROPERTIES WIN32_EXECUTABLE TRUE)
-target_link_libraries(synkro-desktop PRIVATE Synkro::Core Qt6::Widgets)
+target_link_libraries(synkro-desktop PRIVATE Synkro::Core Qt6::Widgets Qt6::Concurrent Qt6::Svg)
 synkro_configure_target(synkro-desktop)
 
 install(TARGETS synkro-desktop RUNTIME DESTINATION bin)

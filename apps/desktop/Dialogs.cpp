@@ -1,0 +1,822 @@
+#include "Dialogs.h"
+
+#include "AppContext.h"
+#include "Format.h"
+#include "Icons.h"
+#include "Theme.h"
+#include "Ui.h"
+
+#include "config/ConfigLoader.h"
+#include "config/ConfigWriter.h"
+#include "config/PlanDescriber.h"
+#include "core/Paths.h"
+#include "core/RunId.h"
+#include "database/Drivers.h"
+#include "database/Tools.h"
+#include "platform/windows/TaskScheduler.h"
+#include "platform/windows/Win32.h"
+#include "secrets/SecretStore.h"
+#include "vault/Vault.h"
+#include "vault/VaultCandidateCheck.h"
+
+#include <QApplication>
+#include <QCheckBox>
+#include <QComboBox>
+#include <QDialogButtonBox>
+#include <QFileDialog>
+#include <QFormLayout>
+#include <QFutureWatcher>
+#include <QGridLayout>
+#include <QHBoxLayout>
+#include <QLineEdit>
+#include <QListWidget>
+#include <QMessageBox>
+#include <QPlainTextEdit>
+#include <QRegularExpression>
+#include <QSpinBox>
+#include <QSplitter>
+#include <QStorageInfo>
+#include <QSyntaxHighlighter>
+#include <QTextBrowser>
+#include <QTimeEdit>
+#include <QTimer>
+#include <QWizardPage>
+#include <QtConcurrent>
+
+#include <functional>
+
+using namespace ui;
+
+namespace {
+
+std::string slugify(const QString& text)
+{
+    QString s = text.normalized(QString::NormalizationForm_KD).toLower();
+    QString out;
+    for (QChar c : s) {
+        if (c.isLetterOrNumber() && c.unicode() < 128)
+            out += c;
+        else if (!out.endsWith('-') && !out.isEmpty())
+            out += '-';
+    }
+    while (out.endsWith('-'))
+        out.chop(1);
+    return out.left(48).toStdString();
+}
+
+class YamlHighlighter : public QSyntaxHighlighter {
+public:
+    using QSyntaxHighlighter::QSyntaxHighlighter;
+
+protected:
+    void highlightBlock(const QString& text) override
+    {
+        static const QRegularExpression key(QStringLiteral("^\\s*-?\\s*([A-Za-z_][\\w-]*)\\s*:"));
+        static const QRegularExpression str(QStringLiteral("\"[^\"]*\""));
+        QTextCharFormat keyFmt, strFmt, commentFmt;
+        keyFmt.setForeground(tk().accent);
+        keyFmt.setFontWeight(QFont::DemiBold);
+        strFmt.setForeground(tk().okFg);
+        commentFmt.setForeground(tk().muted);
+        commentFmt.setFontItalic(true);
+        auto m = key.match(text);
+        if (m.hasMatch())
+            setFormat(m.capturedStart(1), m.capturedLength(1), keyFmt);
+        auto it = str.globalMatch(text);
+        while (it.hasNext()) {
+            auto s = it.next();
+            setFormat(s.capturedStart(), s.capturedLength(), strFmt);
+        }
+        const int hash = text.indexOf('#');
+        if (hash >= 0 && text.left(hash).count('"') % 2 == 0)
+            setFormat(hash, text.size() - hash, commentFmt);
+    }
+};
+
+// Página do assistente com destino configurável.
+class FlowPage : public QWizardPage {
+public:
+    std::function<int()> next;
+    std::function<void()> onEnter;
+    int nextId() const override { return next ? next() : QWizardPage::nextId(); }
+    void initializePage() override
+    {
+        if (onEnter)
+            onEnter();
+    }
+};
+
+QLabel* title(const QString& t)
+{
+    return label(t, "h2");
+}
+
+} // namespace
+
+// ============================================================================
+// AddVaultDialog
+// ============================================================================
+
+AddVaultDialog::AddVaultDialog(QWidget* parent) : QDialog(parent)
+{
+    setWindowTitle(QStringLiteral("Adicionar disco como cofre"));
+    resize(720, 640);
+    auto* v = new QVBoxLayout(this);
+    v->setContentsMargins(24, 22, 24, 22);
+    v->setSpacing(12);
+    v->addWidget(title(QStringLiteral("Escolha o disco")));
+    v->addWidget(label(QStringLiteral("O disco precisa ser diferente do disco de origem e dos outros cofres. Nada é apagado: o "
+                                      "Synkro cria apenas a pasta SynkroVault."),
+                       "muted"));
+
+    m_drive = new QComboBox;
+    for (const auto& s : QStorageInfo::mountedVolumes()) {
+        if (!s.isValid() || !s.isReady() || s.isReadOnly())
+            continue;
+        const QString root = QDir::toNativeSeparators(s.rootPath());
+        m_drive->addItem(QStringLiteral("%1  %2  (%3, %4)")
+                             .arg(root, s.displayName() == s.rootPath() ? QString() : s.displayName(),
+                                  QString::fromLatin1(s.fileSystemType()), fmt::bytes(static_cast<std::uint64_t>(s.bytesTotal()))),
+                         root);
+    }
+    v->addWidget(m_drive);
+
+    auto* form = new QFormLayout;
+    m_label = new QLineEdit;
+    m_label->setPlaceholderText(QStringLiteral("ex.: HD Externo 1 (Seagate 2 TB)"));
+    m_rotation = new QCheckBox(QStringLiteral("Disco de rodízio (sai do local; a ausência é esperada por alguns dias)"));
+    form->addRow(QStringLiteral("Nome do cofre"), m_label);
+    form->addRow(QString(), m_rotation);
+    v->addLayout(form);
+
+    auto* check = ui::button(QStringLiteral("Verificar disco"), QStringLiteral("check"));
+    connect(check, &QPushButton::clicked, this, [this] { runCheck(); });
+    v->addWidget(check, 0, Qt::AlignLeft);
+
+    auto* box = card("insetBox");
+    m_findings = new QVBoxLayout(box);
+    m_findings->setContentsMargins(16, 14, 16, 14);
+    m_findings->setSpacing(10);
+    m_findings->addWidget(label(QStringLiteral("Clique em Verificar disco."), "muted"));
+    v->addWidget(box, 1);
+
+    m_acceptWarnings = new QCheckBox(QStringLiteral("Li os avisos e quero usar este disco mesmo assim"));
+    m_acceptWarnings->hide();
+    v->addWidget(m_acceptWarnings);
+
+    auto* buttons = new QHBoxLayout;
+    buttons->addStretch(1);
+    auto* cancel = ui::button(QStringLiteral("Cancelar"));
+    connect(cancel, &QPushButton::clicked, this, &QDialog::reject);
+    m_initButton = ui::button(QStringLiteral("Inicializar como cofre"), QStringLiteral("shield"), true);
+    m_initButton->setEnabled(false);
+    connect(m_initButton, &QPushButton::clicked, this, [this] { initialize(); });
+    connect(m_acceptWarnings, &QCheckBox::toggled, this, [this](bool on) { m_initButton->setEnabled(m_accepted && on); });
+    buttons->addWidget(cancel);
+    buttons->addWidget(m_initButton);
+    v->addLayout(buttons);
+}
+
+void AddVaultDialog::runCheck()
+{
+    synkro::vault::CandidateRequest req;
+    req.candidatePath = m_drive->currentData().toString().toStdWString();
+    const auto& set = AppContext::instance().config();
+    for (const auto& j : set.jobs) {
+        if (j.type == "files")
+            req.sourcePaths.push_back(j.files.source);
+        else if (j.type == "database")
+            for (const auto& f : j.database.sqliteFiles)
+                req.sourcePaths.push_back(f);
+    }
+    for (const auto& obs : AppContext::instance().vaults())
+        if (obs.connected)
+            req.otherVaults.push_back(obs.location);
+
+    clearLayout(m_findings);
+    m_findings->addWidget(label(QStringLiteral("Verificando (inclui um teste de gravação de 1 MB)…"), "muted"));
+    m_initButton->setEnabled(false);
+    auto* watcher = new QFutureWatcher<synkro::vault::CandidateReport>(this);
+    connect(watcher, &QFutureWatcher<synkro::vault::CandidateReport>::finished, this, [this, watcher] {
+        const auto report = watcher->result();
+        watcher->deleteLater();
+        clearLayout(m_findings);
+        for (const auto& f : report.findings) {
+            auto* row = new QHBoxLayout;
+            row->setSpacing(12);
+            using S = synkro::vault::CheckSeverity;
+            row->addWidget(badge(f.severity == S::Ok ? Tone::Ok : f.severity == S::Blocking ? Tone::Error
+                                                                 : f.severity == S::Warning ? Tone::Warn : Tone::Accent),
+                           0, Qt::AlignTop);
+            auto* txt = new QVBoxLayout;
+            txt->setSpacing(0);
+            txt->addWidget(label(fmt::q(f.title), "fact"));
+            if (!f.detail.empty())
+                txt->addWidget(label(fmt::q(f.detail), "muted"));
+            row->addLayout(txt, 1);
+            m_findings->addLayout(row);
+        }
+        m_findings->addStretch(1);
+        m_accepted = report.accepted();
+        m_hasWarnings = report.hasWarnings();
+        m_mountPoint = report.volume.mountPoint;
+        if (report.volume.kind == synkro::win::DriveKind::Removable)
+            m_rotation->setChecked(true);
+        if (m_label->text().isEmpty() && !report.volume.label.empty())
+            m_label->setText(fmt::q(report.volume.label));
+        m_acceptWarnings->setVisible(m_accepted && m_hasWarnings);
+        m_acceptWarnings->setChecked(false);
+        m_initButton->setEnabled(m_accepted && !m_hasWarnings);
+        if (!m_accepted)
+            m_findings->addWidget(label(QStringLiteral("Este disco não pode ser usado como cofre."), "fact"));
+    });
+    watcher->setFuture(QtConcurrent::run([req] { return synkro::vault::checkCandidate(req); }));
+}
+
+void AddVaultDialog::initialize()
+{
+    const QString name = m_label->text().trimmed();
+    if (name.isEmpty()) {
+        QMessageBox::information(this, windowTitle(), QStringLiteral("Dê um nome ao cofre."));
+        return;
+    }
+    QString vaultId;
+    if (auto existing = synkro::vault::readIdentity(m_mountPoint)) {
+        vaultId = existing.value().vaultId;
+    } else {
+        auto created = synkro::vault::initialize(m_mountPoint, name);
+        if (!created) {
+            QMessageBox::warning(this, windowTitle(), fmt::q(created.error().message));
+            return;
+        }
+        vaultId = created.value().vaultId;
+    }
+
+    auto& ctx = AppContext::instance();
+    synkro::config::GlobalConfig g = ctx.config().global;
+    std::string base = slugify(name);
+    if (base.empty())
+        base = "cofre";
+    std::string id = base;
+    for (int i = 2; g.findVault(id); ++i)
+        id = base + "-" + std::to_string(i);
+    synkro::config::VaultConfig vc;
+    vc.id = id;
+    vc.vaultId = vaultId.toStdString();
+    vc.label = name.toStdString();
+    vc.path = m_mountPoint;
+    vc.rotation = m_rotation->isChecked();
+    vc.maxAbsenceSeconds = vc.rotation ? 7 * 86400 : 86400;
+
+    const std::string current = ctx.readConfigFile(L"synkro.yml");
+    if (current.empty() || synkro::config::isPristineGenerated(current)) {
+        g.vaults.push_back(vc);
+        if (g.defaultVaults.empty() || current.empty())
+            g.defaultVaults.push_back(id);
+        if (auto st = ctx.writeConfigFile(L"synkro.yml", synkro::config::emitGlobal(g)); !st) {
+            QMessageBox::warning(this, windowTitle(), QStringLiteral("O cofre foi criado no disco (ID %1), mas a configuração "
+                                                                    "não pôde ser gravada: %2").arg(vaultId, fmt::q(st.error().message)));
+            return;
+        }
+        QMessageBox::information(this, windowTitle(), QStringLiteral("Cofre \"%1\" pronto e adicionado à configuração.").arg(name));
+    } else {
+        // synkro.yml editado à mão: o desktop não regrava; mostra o trecho a incluir.
+        const QString snippet = QStringLiteral("  - id: %1\n    vault_id: %2\n    label: \"%3\"\n    path: \"%4\"\n    rotation: %5\n")
+                                    .arg(fmt::q(id), vaultId, name, fmt::q(m_mountPoint).replace('\\', '/'),
+                                         vc.rotation ? QStringLiteral("true") : QStringLiteral("false"));
+        QMessageBox box(QMessageBox::Information, windowTitle(),
+                        QStringLiteral("Cofre criado no disco. Como o synkro.yml foi editado à mão, inclua este trecho na lista "
+                                       "vaults (o editor será aberto):\n\n") + snippet,
+                        QMessageBox::Ok, this);
+        box.exec();
+        YamlEditorDialog editor(L"synkro.yml", this);
+        editor.exec();
+    }
+    accept();
+}
+
+// ============================================================================
+// JobWizard
+// ============================================================================
+
+JobWizard::JobWizard(QWidget* parent) : QWizard(parent)
+{
+    setWindowTitle(QStringLiteral("Nova tarefa"));
+    setWizardStyle(QWizard::ModernStyle);
+    setOption(QWizard::NoBackButtonOnStartPage);
+    resize(820, 680);
+    setButtonText(QWizard::NextButton, QStringLiteral("Avançar"));
+    setButtonText(QWizard::BackButton, QStringLiteral("Voltar"));
+    setButtonText(QWizard::FinishButton, QStringLiteral("Criar tarefa"));
+    setButtonText(QWizard::CancelButton, QStringLiteral("Cancelar"));
+
+    // 0. Tipo
+    auto* start = new FlowPage;
+    start->setTitle(QStringLiteral("O que você quer proteger?"));
+    auto* sf = new QFormLayout(start);
+    m_name = new QLineEdit;
+    m_name->setPlaceholderText(QStringLiteral("ex.: Arquivos do PDV"));
+    m_type = new QComboBox;
+    m_type->addItem(QStringLiteral("Pastas e arquivos (XML fiscais, configuração...)"), "files");
+    m_type->addItem(QStringLiteral("Banco de dados (PostgreSQL, MySQL, MariaDB, SQLite)"), "database");
+    sf->addRow(QStringLiteral("Nome da tarefa"), m_name);
+    sf->addRow(QStringLiteral("Tipo"), m_type);
+    sf->addRow(QString(), label(QStringLiteral("Bancos de dados nunca são copiados como arquivos: o Synkro pede ao próprio banco "
+                                                "uma cópia consistente."),
+                                 "muted"));
+
+    // 1. Arquivos
+    auto* files = new FlowPage;
+    files->setTitle(QStringLiteral("Pasta de origem"));
+    auto* ff = new QFormLayout(files);
+    m_source = new QLineEdit;
+    auto* browse = ui::button(QStringLiteral("Escolher…"), QStringLiteral("folder"));
+    connect(browse, &QPushButton::clicked, this, [this] {
+        const QString d = QFileDialog::getExistingDirectory(this, QStringLiteral("Pasta de origem"));
+        if (!d.isEmpty())
+            m_source->setText(QDir::toNativeSeparators(d));
+    });
+    auto* srcRow = new QHBoxLayout;
+    srcRow->addWidget(m_source, 1);
+    srcRow->addWidget(browse);
+    m_exclude = new QLineEdit(QStringLiteral("**/*.tmp, Logs/**"));
+    m_sentinel = new QLineEdit;
+    m_sentinel->setPlaceholderText(QStringLiteral("opcional, ex.: Config/pdv.ini"));
+    ff->addRow(QStringLiteral("Pasta"), srcRow);
+    ff->addRow(QStringLiteral("Ignorar"), m_exclude);
+    ff->addRow(QStringLiteral("Arquivo-sentinela"), m_sentinel);
+    ff->addRow(QString(), label(QStringLiteral("O sentinela é um arquivo que sempre existe na origem: se sumir, o Synkro entende "
+                                                "que a origem está errada e não altera os cofres."),
+                                 "muted"));
+
+    // 2. Banco
+    auto* db = new FlowPage;
+    db->setTitle(QStringLiteral("Banco de dados"));
+    auto* df = new QFormLayout(db);
+    m_engine = new QComboBox;
+    m_engine->addItem(QStringLiteral("PostgreSQL"), "postgresql");
+    m_engine->addItem(QStringLiteral("MySQL"), "mysql");
+    m_engine->addItem(QStringLiteral("MariaDB"), "mariadb");
+    m_engine->addItem(QStringLiteral("SQLite (arquivo)"), "sqlite");
+    m_host = new QLineEdit(QStringLiteral("localhost"));
+    m_port = new QSpinBox;
+    m_port->setRange(1, 65535);
+    m_port->setValue(5432);
+    m_user = new QLineEdit(QStringLiteral("synkro_backup"));
+    m_password = new QLineEdit;
+    m_password->setEchoMode(QLineEdit::Password);
+    m_password->setPlaceholderText(QStringLiteral("gravada cifrada no cofre de segredos"));
+    m_secretName = new QLineEdit;
+    m_databases = new QLineEdit;
+    m_databases->setPlaceholderText(QStringLiteral("pdv_vendas, pdv_estoque  —  ou  all"));
+    m_sqliteFiles = new QLineEdit;
+    m_sqliteFiles->setPlaceholderText(QStringLiteral("C:\\PDV\\dados\\caixa.db; C:\\PDV\\dados\\*.db"));
+    auto* test = ui::button(QStringLiteral("Testar conexão"), QStringLiteral("database"));
+    m_connectionResult = label(QString(), "muted");
+    connect(test, &QPushButton::clicked, this, [this] { testConnection(); });
+    connect(m_engine, &QComboBox::currentIndexChanged, this, [this] {
+        const QString e = m_engine->currentData().toString();
+        const bool server = e != QLatin1String("sqlite");
+        for (QWidget* w : {static_cast<QWidget*>(m_host), static_cast<QWidget*>(m_port), static_cast<QWidget*>(m_user),
+                           static_cast<QWidget*>(m_password), static_cast<QWidget*>(m_secretName), static_cast<QWidget*>(m_databases)})
+            w->setEnabled(server);
+        m_sqliteFiles->setEnabled(!server);
+        m_port->setValue(e == QLatin1String("postgresql") ? 5432 : 3306);
+    });
+    df->addRow(QStringLiteral("Motor"), m_engine);
+    df->addRow(QStringLiteral("Servidor"), m_host);
+    df->addRow(QStringLiteral("Porta"), m_port);
+    df->addRow(QStringLiteral("Usuário"), m_user);
+    df->addRow(QStringLiteral("Senha"), m_password);
+    df->addRow(QStringLiteral("Nome do segredo"), m_secretName);
+    df->addRow(QStringLiteral("Bancos"), m_databases);
+    df->addRow(QStringLiteral("Arquivos SQLite"), m_sqliteFiles);
+    auto* testRow = new QHBoxLayout;
+    testRow->addWidget(test);
+    testRow->addWidget(m_connectionResult, 1);
+    df->addRow(QString(), testRow);
+    m_sqliteFiles->setEnabled(false);
+
+    // 3. Cofres e agendamento
+    auto* when = new FlowPage;
+    when->setTitle(QStringLiteral("Para onde e quando"));
+    auto* wv = new QVBoxLayout(when);
+    wv->addWidget(label(QStringLiteral("Cofres"), "fact"));
+    m_vaults = new QListWidget;
+    m_vaults->setMaximumHeight(130);
+    for (const auto& vc : AppContext::instance().config().global.vaults) {
+        auto* item = new QListWidgetItem(fmt::q(vc.label), m_vaults);
+        item->setData(Qt::UserRole, fmt::q(vc.id));
+        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+        item->setCheckState(Qt::Checked);
+    }
+    wv->addWidget(m_vaults);
+    if (AppContext::instance().config().global.vaults.empty())
+        wv->addWidget(label(QStringLiteral("Nenhum cofre cadastrado: adicione um disco em Cofres antes de criar a tarefa."), "fact"));
+    wv->addWidget(label(QStringLiteral("Dias e horário"), "fact"));
+    auto* daysRow = new QHBoxLayout;
+    static const char* names[] = {"Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"};
+    for (int i = 0; i < 7; ++i) {
+        m_days[i] = new QCheckBox(QString::fromUtf8(names[i]));
+        m_days[i]->setChecked(i < 6);
+        daysRow->addWidget(m_days[i]);
+    }
+    daysRow->addStretch(1);
+    wv->addLayout(daysRow);
+    m_time = new QTimeEdit(QTime(22, 0));
+    m_time->setDisplayFormat(QStringLiteral("HH:mm"));
+    auto* timeRow = new QHBoxLayout;
+    timeRow->addWidget(label(QStringLiteral("às")));
+    timeRow->addWidget(m_time);
+    timeRow->addStretch(1);
+    wv->addLayout(timeRow);
+    m_onStartup = new QCheckBox(QStringLiteral("Também ao ligar o computador (10 minutos depois)"));
+    m_shutdown = new QCheckBox(QStringLiteral("Desligar o computador ao final, somente se tudo der certo"));
+    wv->addWidget(m_onStartup);
+    wv->addWidget(m_shutdown);
+    wv->addStretch(1);
+
+    // 4. Revisão
+    auto* review = new FlowPage;
+    review->setTitle(QStringLiteral("Revise o que a tarefa vai fazer"));
+    auto* rv = new QVBoxLayout(review);
+    m_review = new QTextBrowser;
+    m_review->setStyleSheet(QStringLiteral("font-family: 'Cascadia Mono', Consolas; font-size: 9.5pt;"));
+    rv->addWidget(m_review);
+    review->onEnter = [this] { updateReview(); };
+
+    const int pStart = addPage(start);
+    m_filesPage = addPage(files);
+    m_dbPage = addPage(db);
+    const int pWhen = addPage(when);
+    const int pReview = addPage(review);
+    start->next = [this] { return m_type->currentData().toString() == QLatin1String("files") ? m_filesPage : m_dbPage; };
+    files->next = [pWhen] { return pWhen; };
+    db->next = [pWhen] { return pWhen; };
+    when->next = [pReview] { return pReview; };
+    review->next = [] { return -1; };
+    connect(m_name, &QLineEdit::textChanged, this, [this](const QString& t) {
+        m_secretName->setText(QString::fromStdString(slugify(t)));
+    });
+    (void)pStart;
+}
+
+synkro::config::JobConfig JobWizard::buildJob() const
+{
+    synkro::config::JobConfig j;
+    j.id = slugify(m_name->text());
+    j.name = m_name->text().trimmed().toStdString();
+    j.type = m_type->currentData().toString().toStdString();
+    for (int i = 0; i < m_vaults->count(); ++i)
+        if (m_vaults->item(i)->checkState() == Qt::Checked)
+            j.vaults.push_back(m_vaults->item(i)->data(Qt::UserRole).toString().toStdString());
+
+    synkro::config::ScheduleTrigger t;
+    std::vector<int> days;
+    for (int i = 0; i < 7; ++i)
+        if (m_days[i]->isChecked())
+            days.push_back(i + 1);
+    t.atMinutes = m_time->time().hour() * 60 + m_time->time().minute();
+    if (days.size() == 7) {
+        t.kind = synkro::config::TriggerKind::Daily;
+    } else {
+        t.kind = synkro::config::TriggerKind::Weekly;
+        t.days = days;
+    }
+    if (!days.empty())
+        j.schedule.push_back(t);
+    if (m_onStartup->isChecked()) {
+        synkro::config::ScheduleTrigger boot;
+        boot.kind = synkro::config::TriggerKind::OnStartup;
+        boot.delaySeconds = 600;
+        j.schedule.push_back(boot);
+    }
+    j.shutdownAfter = m_shutdown->isChecked();
+
+    if (j.type == "files") {
+        j.files.source = QDir::toNativeSeparators(m_source->text().trimmed()).toStdWString();
+        for (const auto& p : m_exclude->text().split(',', Qt::SkipEmptyParts))
+            j.files.exclude.push_back(p.trimmed().toStdWString());
+        j.files.sentinelFile = m_sentinel->text().trimmed().toStdWString();
+    } else {
+        auto& d = j.database;
+        d.engine = m_engine->currentData().toString().toStdString();
+        if (d.engine == "sqlite") {
+            for (const auto& f : m_sqliteFiles->text().split(';', Qt::SkipEmptyParts))
+                d.sqliteFiles.push_back(QDir::toNativeSeparators(f.trimmed()).toStdWString());
+        } else {
+            d.host = m_host->text().trimmed().toStdString();
+            d.port = m_port->value();
+            d.user = m_user->text().trimmed().toStdString();
+            d.password = {synkro::config::SecretRef::Kind::Secret, m_secretName->text().trimmed().toStdString()};
+            const QString dbs = m_databases->text().trimmed();
+            if (dbs == QLatin1String("all"))
+                d.allDatabases = true;
+            else
+                for (const auto& n : dbs.split(',', Qt::SkipEmptyParts))
+                    d.databases.push_back({n.trimmed().toStdString(), {}});
+        }
+    }
+    return j;
+}
+
+void JobWizard::testConnection()
+{
+    const auto job = buildJob();
+    if (job.database.engine == "sqlite") {
+        m_connectionResult->setText(QStringLiteral("SQLite não precisa de conexão."));
+        return;
+    }
+    synkro::db::Connection c{job.database.host, job.database.port, job.database.user, m_password->text().toStdString(),
+                             job.database.remote ? "require" : "", {}, 10};
+    m_connectionResult->setText(QStringLiteral("testando…"));
+    auto* watcher = new QFutureWatcher<QString>(this);
+    connect(watcher, &QFutureWatcher<QString>::finished, this, [this, watcher] {
+        m_connectionResult->setText(watcher->result());
+        watcher->deleteLater();
+    });
+    watcher->setFuture(QtConcurrent::run([job, c]() -> QString {
+        auto dir = synkro::db::PrivateDirectory::create(
+            synkro::win::joinPath(synkro::stagingDirectory(), L"teste-" + synkro::newRunId()));
+        if (!dir)
+            return fmt::q(dir.error().message);
+        synkro::db::DumpContext ctx;
+        ctx.workDir = dir.value().path();
+        ctx.retries = 0;
+        auto dbs = synkro::db::listServerDatabases(job.database, c, ctx);
+        if (!dbs)
+            return QStringLiteral("✗ ") + fmt::q(dbs.error().message);
+        QStringList names;
+        for (const auto& n : dbs.value())
+            names << fmt::q(n);
+        return QStringLiteral("✓ conectado. Bancos: ") + names.join(QStringLiteral(", "));
+    }));
+}
+
+void JobWizard::updateReview()
+{
+    const auto job = buildJob();
+    auto set = AppContext::instance().config();
+    std::vector<synkro::config::Diagnostic> diags;
+    const std::string yaml = synkro::config::emitJob(job);
+    const auto parsed = synkro::config::parseJobDocument(yaml, L"jobs\\" + synkro::win::fromUtf8(job.id) + L".yml", set.global, diags);
+    QString text;
+    for (const auto& d : diags)
+        text += fmt::q(synkro::config::formatDiagnostic(d)) + "\n";
+    if (!text.isEmpty())
+        text += "\n";
+    set.jobs.push_back(parsed);
+    text += fmt::q(synkro::config::describeJob(set, parsed));
+    m_review->setPlainText(text);
+}
+
+void JobWizard::accept()
+{
+    const auto job = buildJob();
+    if (job.id.empty()) {
+        QMessageBox::warning(this, windowTitle(), QStringLiteral("Dê um nome à tarefa."));
+        return;
+    }
+    auto& ctx = AppContext::instance();
+    if (ctx.config().findJob(job.id)) {
+        QMessageBox::warning(this, windowTitle(), QStringLiteral("Já existe uma tarefa com o id \"%1\".").arg(fmt::q(job.id)));
+        return;
+    }
+    const std::string yaml = synkro::config::emitJob(job);
+    std::vector<synkro::config::Diagnostic> diags;
+    (void)synkro::config::parseJobDocument(yaml, L"jobs\\x.yml", ctx.config().global, diags);
+    for (const auto& d : diags) {
+        if (d.severity == synkro::config::Severity::Error) {
+            QMessageBox::warning(this, windowTitle(), QStringLiteral("Corrija antes de criar:\n") + fmt::q(synkro::config::formatDiagnostic(d)));
+            return;
+        }
+    }
+    if (job.type == "database" && job.database.engine != "sqlite" && !m_password->text().isEmpty()) {
+        std::string pw = m_password->text().toStdString();
+        auto st = synkro::SecretStore(synkro::secretsFile()).set(job.database.password.name, pw);
+        synkro::wipe(pw);
+        if (!st) {
+            QMessageBox::warning(this, windowTitle(), QStringLiteral("Não foi possível gravar o segredo: ") + fmt::q(st.error().message));
+            return;
+        }
+    }
+    if (auto st = ctx.writeConfigFile(L"jobs\\" + synkro::win::fromUtf8(job.id) + L".yml", yaml); !st) {
+        QMessageBox::warning(this, windowTitle(), fmt::q(st.error().message));
+        return;
+    }
+    QMessageBox::information(this, windowTitle(),
+                             QStringLiteral("Tarefa criada. Para agendá-la no Windows, use Configurações › Aplicar e agendar."));
+    QWizard::accept();
+}
+
+// ============================================================================
+// YamlEditorDialog
+// ============================================================================
+
+YamlEditorDialog::YamlEditorDialog(const std::wstring& relativePath, QWidget* parent)
+    : QDialog(parent), m_path(relativePath), m_isGlobal(synkro::win::foldCase(relativePath) == L"SYNKRO.YML")
+{
+    setWindowTitle(QStringLiteral("Editor YAML — ") + fmt::q(relativePath));
+    resize(1180, 760);
+    auto* v = new QVBoxLayout(this);
+    v->setContentsMargins(20, 18, 20, 18);
+    v->addWidget(label(QStringLiteral("As alterações são validadas enquanto você digita; o arquivo só é salvo sem erros."), "muted"));
+
+    auto* split = new QSplitter;
+    m_editor = new QPlainTextEdit;
+    m_editor->setProperty("role", "code");
+    m_editor->setLineWrapMode(QPlainTextEdit::NoWrap);
+    m_editor->setPlainText(QString::fromStdString(AppContext::instance().readConfigFile(relativePath)));
+    new YamlHighlighter(m_editor->document());
+    split->addWidget(m_editor);
+
+    auto* side = new QWidget;
+    auto* sv = new QVBoxLayout(side);
+    sv->setContentsMargins(12, 0, 0, 0);
+    sv->addWidget(label(QStringLiteral("PROBLEMAS"), "caption"));
+    m_diagnostics = new QListWidget;
+    m_diagnostics->setMaximumHeight(160);
+    connect(m_diagnostics, &QListWidget::itemClicked, this, [this](QListWidgetItem* item) {
+        const int line = item->data(Qt::UserRole).toInt();
+        if (line <= 0)
+            return;
+        QTextCursor c(m_editor->document()->findBlockByNumber(line - 1));
+        m_editor->setTextCursor(c);
+        m_editor->setFocus();
+    });
+    sv->addWidget(m_diagnostics);
+    sv->addWidget(label(m_isGlobal ? QStringLiteral("RESUMO") : QStringLiteral("O QUE ESTA TAREFA VAI FAZER"), "caption"));
+    m_plan = new QTextBrowser;
+    m_plan->setStyleSheet(QStringLiteral("font-family: 'Cascadia Mono', Consolas; font-size: 9pt;"));
+    sv->addWidget(m_plan, 1);
+    split->addWidget(side);
+    split->setStretchFactor(0, 3);
+    split->setStretchFactor(1, 2);
+    v->addWidget(split, 1);
+
+    auto* row = new QHBoxLayout;
+    row->addStretch(1);
+    auto* cancel = ui::button(QStringLiteral("Cancelar"));
+    connect(cancel, &QPushButton::clicked, this, &QDialog::reject);
+    m_save = ui::button(QStringLiteral("Salvar"), QStringLiteral("check"), true);
+    connect(m_save, &QPushButton::clicked, this, [this] { save(); });
+    row->addWidget(cancel);
+    row->addWidget(m_save);
+    v->addLayout(row);
+
+    m_debounce = new QTimer(this);
+    m_debounce->setSingleShot(true);
+    m_debounce->setInterval(350);
+    connect(m_debounce, &QTimer::timeout, this, [this] { validate(); });
+    connect(m_editor, &QPlainTextEdit::textChanged, m_debounce, qOverload<>(&QTimer::start));
+    validate();
+}
+
+void YamlEditorDialog::validate()
+{
+    const std::string text = m_editor->toPlainText().toStdString();
+    std::vector<synkro::config::Diagnostic> diags;
+    auto set = AppContext::instance().config();
+    QString plan;
+    if (m_isGlobal) {
+        const auto g = synkro::config::parseGlobalDocument(text, m_path, diags);
+        plan = QStringLiteral("%1 cofre(s) declarado(s).\n").arg(g.vaults.size());
+        for (const auto& v : g.vaults)
+            plan += QStringLiteral("  • %1 (%2)%3\n").arg(fmt::q(v.label), fmt::q(v.id), v.rotation ? QStringLiteral(" · rodízio") : QString());
+    } else {
+        const auto job = synkro::config::parseJobDocument(text, m_path, set.global, diags);
+        set.jobs.erase(std::remove_if(set.jobs.begin(), set.jobs.end(), [&](const auto& j) { return j.id == job.id; }), set.jobs.end());
+        set.jobs.push_back(job);
+        plan = fmt::q(synkro::config::describeJob(set, job));
+    }
+    m_diagnostics->clear();
+    m_hasErrors = false;
+    for (const auto& d : diags) {
+        m_hasErrors = m_hasErrors || d.severity == synkro::config::Severity::Error;
+        auto* item = new QListWidgetItem(fmt::q(synkro::config::formatDiagnostic(d)), m_diagnostics);
+        item->setData(Qt::UserRole, d.line);
+        item->setForeground(d.severity == synkro::config::Severity::Error ? tk().errFg : tk().warnFg);
+    }
+    if (diags.empty())
+        new QListWidgetItem(QStringLiteral("✓ nenhum problema"), m_diagnostics);
+    m_plan->setPlainText(plan);
+    m_save->setEnabled(!m_hasErrors);
+}
+
+void YamlEditorDialog::save()
+{
+    if (auto st = AppContext::instance().writeConfigFile(m_path, m_editor->toPlainText().toStdString()); !st) {
+        QMessageBox::warning(this, windowTitle(), fmt::q(st.error().message));
+        return;
+    }
+    accept();
+}
+
+// ============================================================================
+// SecretDialog
+// ============================================================================
+
+SecretDialog::SecretDialog(const QString& name, QWidget* parent) : QDialog(parent)
+{
+    setWindowTitle(QStringLiteral("Cadastrar segredo"));
+    resize(460, 220);
+    auto* f = new QFormLayout(this);
+    f->setContentsMargins(22, 20, 22, 20);
+    m_name = new QLineEdit(name);
+    m_name->setPlaceholderText(QStringLiteral("ex.: pg-pdv"));
+    m_value = new QLineEdit;
+    m_value->setEchoMode(QLineEdit::Password);
+    m_confirm = new QLineEdit;
+    m_confirm->setEchoMode(QLineEdit::Password);
+    f->addRow(QStringLiteral("Nome"), m_name);
+    f->addRow(QStringLiteral("Valor"), m_value);
+    f->addRow(QStringLiteral("Confirmar"), m_confirm);
+    auto* box = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
+    box->button(QDialogButtonBox::Save)->setText(QStringLiteral("Gravar"));
+    box->button(QDialogButtonBox::Save)->setProperty("role", "primary");
+    box->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("Cancelar"));
+    connect(box, &QDialogButtonBox::accepted, this, &QDialog::accept);
+    connect(box, &QDialogButtonBox::rejected, this, &QDialog::reject);
+    f->addRow(box);
+}
+
+QString SecretDialog::name() const
+{
+    return m_name->text().trimmed();
+}
+
+void SecretDialog::accept()
+{
+    if (m_value->text() != m_confirm->text()) {
+        QMessageBox::warning(this, windowTitle(), QStringLiteral("Os valores não conferem."));
+        return;
+    }
+    std::string value = m_value->text().toStdString();
+    auto st = synkro::SecretStore(synkro::secretsFile()).set(name().toStdString(), value);
+    synkro::wipe(value);
+    m_value->clear();
+    m_confirm->clear();
+    if (!st) {
+        QMessageBox::warning(this, windowTitle(), fmt::q(st.error().message));
+        return;
+    }
+    QDialog::accept();
+}
+
+// ============================================================================
+// RunDialog
+// ============================================================================
+
+RunDialog::RunDialog(const QString& jobId, QWidget* parent) : QDialog(parent)
+{
+    setWindowTitle(QStringLiteral("Executando ") + jobId);
+    resize(780, 520);
+    auto* v = new QVBoxLayout(this);
+    v->setContentsMargins(20, 18, 20, 18);
+    m_status = label(QStringLiteral("Iniciando…"), "h2");
+    v->addWidget(m_status);
+    m_log = new QPlainTextEdit;
+    m_log->setReadOnly(true);
+    m_log->setProperty("role", "code");
+    v->addWidget(m_log, 1);
+    m_close = ui::button(QStringLiteral("Fechar"));
+    m_close->setEnabled(false);
+    connect(m_close, &QPushButton::clicked, this, &QDialog::accept);
+    v->addWidget(m_close, 0, Qt::AlignRight);
+
+    // Se a tarefa está registrada no Agendador, roda como SYSTEM (com VSS).
+    if (synkro::win::runTaskNow(L"job-" + jobId.toStdWString())) {
+        m_status->setText(QStringLiteral("Iniciada pelo Agendador do Windows (como SYSTEM)"));
+        m_log->setPlainText(QStringLiteral("Acompanhe o resultado no Painel e no Histórico em alguns instantes."));
+        m_close->setEnabled(true);
+        return;
+    }
+
+    m_process.setProgram(AppContext::instance().workerPath());
+    m_process.setArguments({QStringLiteral("backup"), QStringLiteral("--job"), jobId, QStringLiteral("--trigger"),
+                            QStringLiteral("manual"), QStringLiteral("--no-shutdown"), QStringLiteral("--config-dir"),
+                            fmt::q(AppContext::instance().configDir())});
+    m_process.setProcessChannelMode(QProcess::MergedChannels);
+    connect(&m_process, &QProcess::readyRead, this, [this] {
+        m_log->moveCursor(QTextCursor::End);
+        m_log->insertPlainText(QString::fromUtf8(m_process.readAll()));
+        m_log->moveCursor(QTextCursor::End);
+    });
+    connect(&m_process, &QProcess::finished, this, [this](int code, QProcess::ExitStatus) {
+        static const QHash<int, QString> texts = {{0, QStringLiteral("Concluída com sucesso")},
+                                                  {1, QStringLiteral("Concluída com avisos (degradada)")},
+                                                  {2, QStringLiteral("Falhou")},
+                                                  {3, QStringLiteral("Bloqueada por uma proteção")},
+                                                  {4, QStringLiteral("A tarefa já estava em execução")}};
+        m_status->setText(texts.value(code, QStringLiteral("Terminou com código %1").arg(code)));
+        m_close->setEnabled(true);
+        AppContext::instance().reload();
+    });
+    connect(&m_process, &QProcess::errorOccurred, this, [this](QProcess::ProcessError) {
+        m_status->setText(QStringLiteral("Não foi possível iniciar o synkro-worker"));
+        m_log->appendPlainText(m_process.errorString());
+        m_close->setEnabled(true);
+    });
+    m_status->setText(QStringLiteral("Em execução…"));
+    m_process.start();
+}
