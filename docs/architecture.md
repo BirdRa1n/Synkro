@@ -670,7 +670,10 @@ Migração para MSVC, Task Scheduler (SYSTEM), tarefa de manutenção, `config a
 
 **Saída:** uma semana rodando num PDV de teste, com desligamentos forçados e desconexão de disco, sem intervenção manual e sem perda; testes de ida e volta de cada motor passando, inclusive com gravações concorrentes; nenhuma senha encontrada em logs ou metadados.
 
-### Fase 3 — Interface desktop
+### Fase 3 — Interface desktop ✅ (implementada em 2026-11-18)
+
+> Visual da proposta de design 5 ("Cofres"), com tema claro, escuro ou do Windows. O desktop roda como usuário comum e delega ao `synkro-worker` (com UAC) o que exige administrador. **Pendências:** início automático na bandeja ao entrar no Windows (fica com o instalador, Fase 4) e o teste de usabilidade do critério de saída.
+
 Dashboard, cadastro de cofres (com as checagens), assistente de tarefas de arquivos e de bancos (com teste de conexão), editor YAML integrado com validação ao digitar e painel "O que esta tarefa vai fazer", cadastro de segredos, histórico, restauração pela interface, bandeja com alertas, modo "abrir cofre".
 
 **Saída:** um técnico configura um PDV do zero e faz uma restauração sem consultar documentação.

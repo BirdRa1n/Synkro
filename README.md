@@ -2,7 +2,7 @@
 
 Backup incremental, versionado e redundante para dados críticos no Windows, com foco em sistemas PDV: arquivos fiscais, configurações e bancos de dados (PostgreSQL, MySQL/MariaDB, SQLite).
 
-> **Estado:** em desenvolvimento. As Fases 1 (motor e CLI) e 2 (automação e bancos de dados) estão implementadas; a interface desktop é a Fase 3. Veja o [roadmap](docs/architecture.md#15-roadmap).
+> **Estado:** em desenvolvimento. As Fases 1 (motor e CLI), 2 (automação e bancos de dados) e 3 (interface desktop) estão implementadas; a Fase 4 é robustez de campo e instalador. Veja o [roadmap](docs/architecture.md#15-roadmap).
 
 ## Princípios
 
@@ -36,7 +36,9 @@ Backup incremental, versionado e redundante para dados críticos no Windows, com
 | Desligamento seguro após sucesso, com contagem regressiva e cancelamento | ✅ |
 | Trava no servidor contra dumps simultâneos (`remote.server_lock`), migração para MSVC | pendente |
 | Teste de restauração automático de dumps, Firebird e SQL Server | Fase 4 |
-| Interface desktop | Fase 3 |
+| Interface desktop: painel, tarefas, cofres, histórico, restauração e configurações; tema claro/escuro/sistema; bandeja com alertas | ✅ |
+| Assistente de tarefas com teste de conexão, editor YAML com validação ao vivo, cadastro de discos com checagem | ✅ |
+| Instalador MSI assinado e início automático na bandeja | Fase 4 |
 
 ## Documentação
 
@@ -50,7 +52,7 @@ Backup incremental, versionado e redundante para dados críticos no Windows, com
 ## Estrutura
 
 ```
-apps/desktop/   synkro-desktop (Qt Widgets)
+apps/desktop/   synkro-desktop (Qt Widgets): telas, diálogos, tema e bandeja
 apps/worker/    synkro-worker (CLI, executado pelo Agendador de Tarefas)
 src/            libsynkro — motor (Qt Core + Win32, sem dependência de UI)
   catalog/      catálogo e manifests do cofre (JSON Lines)
@@ -84,6 +86,15 @@ ctest --preset mingw-debug
 ```
 
 No Qt Creator basta abrir o `CMakeLists.txt` da raiz.
+
+## Synkro Desktop
+
+`synkro-desktop.exe` é a interface para o dia a dia: mostra a situação dos backups, cadastra discos como cofres (com a checagem de disco físico, sistema de arquivos e gravação), cria tarefas pelo assistente, edita os YAMLs com validação ao vivo e o painel "O que esta tarefa vai fazer", gerencia segredos, executa tarefas e restaura arquivos ou bancos de qualquer cofre conectado — inclusive de outro computador.
+
+- Fechar a janela mantém o Synkro na bandeja; o ícone fica verde, amarelo ou vermelho conforme os alertas.
+- `synkro-desktop --tray` inicia direto na bandeja.
+- Registrar as tarefas no Agendador pede confirmação de administrador (UAC).
+- Arquivos YAML gerados pelo desktop podem ser editados à mão: a partir daí o desktop os abre no editor e nunca os regrava.
 
 ## Uso do worker
 
