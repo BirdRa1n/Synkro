@@ -22,6 +22,7 @@ enum class CheckId {
     WriteTest,
     Removable,
     ExistingVault,
+    DiskHealth,
 };
 
 struct CheckFinding {

@@ -1,6 +1,7 @@
 #include "state/Alerts.h"
 
 #include "config/Values.h"
+#include "platform/windows/DiskHealth.h"
 #include "platform/windows/Volume.h"
 #include "platform/windows/Win32.h"
 #include "vault/VaultLocator.h"
@@ -24,9 +25,42 @@ std::string percent(double r)
 
 } // namespace
 
+namespace {
+
+int healthLevel(win::HealthStatus s)
+{
+    switch (s) {
+    case win::HealthStatus::Healthy:   return 0;
+    case win::HealthStatus::Warning:   return 1;
+    case win::HealthStatus::Unhealthy: return 2;
+    case win::HealthStatus::Unknown:   break;
+    }
+    return -1;
+}
+
+// Pior saúde entre os discos físicos de um volume.
+void applyHealth(const std::vector<win::DiskHealth>& all, const std::vector<std::uint32_t>& disks, int& level,
+                 std::string& text)
+{
+    for (auto n : disks) {
+        for (const auto& d : all) {
+            if (d.diskNumber != n)
+                continue;
+            const int l = healthLevel(d.status);
+            if (l > level || text.empty()) {
+                level = std::max(level, l);
+                text = d.model + " — " + win::describeHealth(d);
+            }
+        }
+    }
+}
+
+} // namespace
+
 std::vector<VaultObservation> observeVaults(const config::ConfigSet& set, StateStore& state)
 {
     std::vector<VaultObservation> out;
+    const auto health = win::queryDiskHealth();
     for (const auto& v : set.global.vaults) {
         VaultObservation o;
         o.id = v.id;
@@ -37,6 +71,8 @@ std::vector<VaultObservation> observeVaults(const config::ConfigSet& set, StateS
             if (auto vol = win::queryVolume(o.location)) {
                 o.freeBytes = vol.value().freeBytes;
                 o.totalBytes = vol.value().totalBytes;
+                if (health)
+                    applyHealth(health.value(), vol.value().physicalDisks, o.health, o.healthText);
             }
             (void)state.recordVaultSeen(o.vaultId, o.location, o.freeBytes, o.totalBytes, false);
         }
@@ -89,11 +125,33 @@ std::vector<AlertRow> computeAlerts(const config::ConfigSet& set, StateStore& st
         }
     }
 
+    // Disco da origem com defeito: os dados originais correm risco.
+    if (auto health = win::queryDiskHealth()) {
+        for (const auto& job : set.jobs) {
+            if (!job.enabled || job.type != "files" || job.files.source.empty())
+                continue;
+            auto vol = win::queryVolume(job.files.source);
+            if (!vol)
+                continue;
+            int level = -1;
+            std::string text;
+            applyHealth(health.value(), vol.value().physicalDisks, level, text);
+            if (level >= 1)
+                add("source_disk_health", job.id, level == 2 ? AlertSeverity::Critical : AlertSeverity::Warning,
+                    "o disco da origem de \"" + job.name + "\" está " + (level == 2 ? "com defeito" : "com sinais de falha")
+                        + " (" + text + "); confira se os backups estão em dia");
+        }
+    }
+
     for (const auto& o : vaults) {
         const config::VaultConfig* vc = set.global.findVault(o.id);
         if (!vc)
             continue;
         if (o.connected) {
+            if (o.health >= 1)
+                add("disk_health", o.id, o.health == 2 ? AlertSeverity::Critical : AlertSeverity::Warning,
+                    "o disco do cofre \"" + vc->label + "\" está " + (o.health == 2 ? "com defeito" : "com sinais de falha")
+                        + " (" + o.healthText + "); providencie a troca");
             if (o.totalBytes > 0) {
                 const double free = static_cast<double>(o.freeBytes) / static_cast<double>(o.totalBytes);
                 if (free < vc->freeSpaceAlert)

@@ -166,6 +166,17 @@ void VaultsPage::refresh()
         fact(1, QStringLiteral("Visto pela última vez"), obs.connected ? QStringLiteral("Agora") : seen ? fmt::when(seen->lastSeenAt) : QStringLiteral("Nunca"));
         fact(2, QStringLiteral("Local"), obs.connected ? fmt::q(obs.location) : QStringLiteral("—"));
         fact(3, QStringLiteral("Identidade"), obs.vaultId.left(4) + QStringLiteral("…") + obs.vaultId.right(4));
+        if (obs.connected) {
+            QString health = obs.healthText.empty() ? QStringLiteral("Desconhecida") : fmt::q(obs.healthText);
+            auto* box = new QVBoxLayout;
+            box->setSpacing(0);
+            box->addWidget(label(QStringLiteral("Saúde do disco (SMART)"), "muted"));
+            auto* hl = label(health, "fact");
+            if (obs.health >= 1)
+                hl->setStyleSheet(QStringLiteral("color:%1;").arg((obs.health == 2 ? tk().errFg : tk().warnFg).name()));
+            box->addWidget(hl);
+            facts->addLayout(box, 2, 0, 1, 2);
+        }
         v->addLayout(facts);
 
         auto* buttons = new QHBoxLayout;

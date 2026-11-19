@@ -208,6 +208,8 @@ int cmdStatus(const QStringList& args)
         out() << "  " << q(vc ? vc->label : v.id).leftJustified(30);
         if (v.connected) {
             out() << "conectado em " << q(v.location) << " · " << humanBytes(v.freeBytes) << " livres";
+            if (!v.healthText.empty())
+                out() << "\n  " << QString().leftJustified(30) << "saúde: " << q(v.healthText);
         } else {
             const auto seen = state->vaultSeen(v.vaultId);
             out() << "desconectado" << (seen && seen->lastSeenAt.isValid()

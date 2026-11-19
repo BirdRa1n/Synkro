@@ -73,6 +73,8 @@ add_library(synkro_core STATIC
     hash/Sha256.cpp
 
     platform/windows/AlignedBuffer.h
+    platform/windows/DiskHealth.h
+    platform/windows/DiskHealth.cpp
     platform/windows/Locks.h
     platform/windows/Locks.cpp
     platform/windows/Shutdown.h
@@ -120,7 +122,7 @@ add_library(Synkro::Core ALIAS synkro_core)
 target_include_directories(synkro_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(synkro_core
     PUBLIC  Qt6::Core
-    PRIVATE bcrypt crypt32 advapi32 yaml-cpp::yaml-cpp vssapi ole32 oleaut32 taskschd Synkro::SQLite3 Synkro::Zstd
+    PRIVATE bcrypt crypt32 advapi32 yaml-cpp::yaml-cpp vssapi ole32 oleaut32 taskschd wbemuuid Synkro::SQLite3 Synkro::Zstd
 )
 target_compile_definitions(synkro_core PUBLIC
     SYNKRO_VERSION_STRING="${PROJECT_VERSION}"

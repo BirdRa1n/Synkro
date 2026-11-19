@@ -137,11 +137,18 @@ private slots:
         const QDateTime now = QDateTime::currentDateTimeUtc();
 
         // Nada executado, cofre B nunca visto.
-        std::vector<VaultObservation> vaults = {{"a", env.idA, true, env.a, 50, 100}, {"b", env.idB, false, {}, 0, 0}};
+        std::vector<VaultObservation> vaults = {{"a", env.idA, true, env.a, 50, 100, -1, {}}, {"b", env.idB, false, {}, 0, 0, -1, {}}};
         auto alerts = computeAlerts(set, s, vaults, now);
         QVERIFY(hasAlert(alerts, "never_run", "arquivos"));
         QVERIFY(hasAlert(alerts, "vault_absent", "b"));
         QVERIFY(!hasAlert(alerts, "low_space", "a"));
+
+        // Disco do cofre com defeito (SMART).
+        auto sick = vaults;
+        sick[0].health = 2;
+        sick[0].healthText = "ST3500 — Com defeito";
+        const auto sickAlerts = computeAlerts(set, s, sick, now);
+        QVERIFY(hasAlert(sickAlerts, "disk_health", "a"));
 
         // Sucesso antigo (> 26 h) + falha na última execução + pouco espaço em A.
         BackupResult ok;
@@ -168,7 +175,7 @@ private slots:
         good.status = RunStatus::Success;
         QVERIFY(s.recordRun(L"arquivos", "files", "schedule", good, now, now).ok());
         QVERIFY(s.recordVaultSeen(env.idB, env.b, 50, 100, true).ok());
-        vaults = {{"a", env.idA, true, env.a, 50, 100}, {"b", env.idB, false, {}, 0, 0}};
+        vaults = {{"a", env.idA, true, env.a, 50, 100, -1, {}}, {"b", env.idB, false, {}, 0, 0, -1, {}}};
         auto ev2 = reconcileAlerts(s, computeAlerts(set, s, vaults, now));
         QVERIFY(ev2.ok());
         QVERIFY(ev2.value().active.empty());

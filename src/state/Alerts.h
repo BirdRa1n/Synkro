@@ -23,6 +23,10 @@ struct VaultObservation {
     bool connected = false;
     std::wstring location;
     std::uint64_t freeBytes = 0, totalBytes = 0;
+    // Saúde do(s) disco(s) físico(s) do cofre: 0 saudável, 1 atenção,
+    // 2 com defeito, -1 desconhecida.
+    int health = -1;
+    std::string healthText;
 };
 
 // Calcula os alertas de architecture.md §12 a partir da configuração, do

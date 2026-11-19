@@ -1,6 +1,7 @@
 #include "vault/VaultCandidateCheck.h"
 
 #include "hash/Sha256.h"
+#include "platform/windows/DiskHealth.h"
 #include "platform/windows/Win32.h"
 #include "vault/Vault.h"
 
@@ -196,7 +197,27 @@ CandidateReport checkCandidate(const CandidateRequest& req)
             add(CheckId::WriteTest, CheckSeverity::Blocking, "Falha no teste de gravação", st.error().message);
     }
 
-    // 8. Removível (habilita a política de rodízio).
+    // 8. Saúde do disco físico (SMART, via WMI).
+    if (!v.physicalDisks.empty()) {
+        for (auto n : v.physicalDisks) {
+            auto h = win::healthOfDisk(n);
+            if (!h) {
+                add(CheckId::DiskHealth, CheckSeverity::Info, "Saúde do disco desconhecida",
+                    "O Windows não informou o estado deste disco.");
+                continue;
+            }
+            const std::string text = h->model + " — " + win::describeHealth(*h);
+            if (h->status == win::HealthStatus::Healthy)
+                add(CheckId::DiskHealth, CheckSeverity::Ok, "Saúde do disco", text);
+            else if (h->status == win::HealthStatus::Unknown)
+                add(CheckId::DiskHealth, CheckSeverity::Info, "Saúde do disco desconhecida", text);
+            else
+                add(CheckId::DiskHealth, CheckSeverity::Warning, "Disco com sinais de falha",
+                    text + ". Um disco assim pode perder o backup; prefira outro.");
+        }
+    }
+
+    // 9. Removível (habilita a política de rodízio).
     if (v.kind == win::DriveKind::Removable)
         add(CheckId::Removable, CheckSeverity::Info, "Disco removível",
             "Pode ser usado como cofre de rodízio, guardado fora do local.");
