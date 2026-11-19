@@ -7,6 +7,9 @@ synkro_add_test(tst_configset     tst_configset.cpp)
 synkro_add_test(tst_process       tst_process.cpp)
 synkro_add_test(tst_secrets       tst_secrets.cpp)
 synkro_add_test(tst_operations    tst_operations.cpp)
+# Estresse (~100 mil arquivos): só roda com SYNKRO_STRESS=1; sem ela, é pulado.
+synkro_add_test(tst_stress        tst_stress.cpp)
+set_tests_properties(tst_stress PROPERTIES TIMEOUT 7200)
 
 # Ferramenta falsa que imita pg_dump/mysqldump para os testes de banco.
 add_executable(fake_dbtool ../support/fake_dbtool.cpp)
