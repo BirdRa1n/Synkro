@@ -9,6 +9,7 @@
 #include "platform/windows/Win32.h"
 #include "vault/VaultLocator.h"
 
+#include <QUrl>
 #include <QUuid>
 
 #include <yaml-cpp/yaml.h>
@@ -28,6 +29,14 @@ const VaultConfig* GlobalConfig::findVault(const std::string& id) const
         if (v.id == id)
             return &v;
     }
+    return nullptr;
+}
+
+const NotificationChannel* NotificationsConfig::find(const std::string& id) const
+{
+    for (const auto& c : channels)
+        if (c.id == id)
+            return &c;
     return nullptr;
 }
 
@@ -1105,12 +1114,155 @@ bool isLocalDatabaseHost(const std::string& host)
 
 namespace {
 
+bool validEmail(const std::string& s)
+{
+    const auto at = s.find('@');
+    return at != std::string::npos && at > 0 && at + 1 < s.size() && s.find('@', at + 1) == std::string::npos
+           && s.find_first_of(" \t\r\n<>,;\"") == std::string::npos && s.find('.', at) != std::string::npos;
+}
+
+// notifications: canais de e-mail, webhook e Telegram (configuration.md §3.1).
+void parseNotifications(Reader& r, const YAML::Node& n, NotificationsConfig& out)
+{
+    if (!r.requireMap(n, "notifications"))
+        return;
+    r.checkKeys(n, "notifications", {"repeat_every", "channels"});
+    if (const YAML::Node rep = n["repeat_every"]) {
+        if (rep.IsScalar() && (rep.Scalar() == "never" || rep.Scalar() == "0"))
+            out.repeatEverySeconds = 0;
+        else if (auto t = r.duration(n, "repeat_every", "notifications")) {
+            if (*t < 3600)
+                r.error(rep, "notifications.repeat_every", "mínimo de 1h entre lembretes (ou \"never\")");
+            out.repeatEverySeconds = *t;
+        }
+    }
+    const YAML::Node cs = n["channels"];
+    if (!cs)
+        return;
+    if (!cs.IsSequence()) {
+        r.error(cs, "notifications.channels", "esperada uma lista de canais");
+        return;
+    }
+    std::set<std::string> ids;
+    int i = 0;
+    for (const auto& c : cs) {
+        const std::string p = "notifications.channels[" + std::to_string(i++) + "]";
+        if (!r.requireMap(c, p))
+            continue;
+        NotificationChannel ch;
+        ch.id = r.str(c, "id", p, true).value_or("");
+        if (!ch.id.empty() && !isValidJobId(w(ch.id)))
+            r.error(c["id"], join(p, "id"), "use letras minúsculas, números e hífen");
+        if (!ch.id.empty() && !ids.insert(ch.id).second)
+            r.error(c["id"], join(p, "id"), "id de canal repetido");
+        const std::string type = r.oneOf(c, "type", p, {"email", "webhook", "telegram"}).value_or("");
+        if (type.empty() && !c["type"])
+            r.error(c, join(p, "type"), "campo obrigatório (email, webhook ou telegram)");
+
+        static const std::initializer_list<const char*> common = {
+            "id", "type", "enabled", "min_severity", "resolved", "daily_report", "timeout", "allow_insecure"};
+        std::vector<const char*> keys(common);
+        if (type == "email")
+            keys.insert(keys.end(), {"smtp", "from", "to"});
+        else if (type == "webhook")
+            keys.insert(keys.end(), {"url", "format", "token"});
+        else if (type == "telegram")
+            keys.insert(keys.end(), {"bot_token", "chat_id"});
+        for (auto it = c.begin(); !type.empty() && it != c.end(); ++it) {
+            const std::string k = it->first.as<std::string>("");
+            if (std::none_of(keys.begin(), keys.end(), [&](const char* a) { return k == a; }))
+                r.error(it->first, join(p, k), "campo desconhecido para canais " + type);
+        }
+
+        ch.enabled = r.boolean(c, "enabled", p).value_or(true);
+        ch.criticalOnly = r.oneOf(c, "min_severity", p, {"warning", "critical"}).value_or("warning") == "critical";
+        ch.resolved = r.boolean(c, "resolved", p).value_or(true);
+        if (auto at = r.str(c, "daily_report", p)) {
+            if (auto m = parseTimeOfDay(*at))
+                ch.dailyReportAt = *m;
+            else
+                r.error(c["daily_report"], join(p, "daily_report"), "horário inválido (use HH:MM, ex.: \"08:00\")");
+        }
+        if (auto t = r.duration(c, "timeout", p)) {
+            if (*t < 5 || *t > 300)
+                r.error(c["timeout"], join(p, "timeout"), "use entre 5s e 5min");
+            ch.timeoutSeconds = *t;
+        }
+        ch.allowInsecure = r.boolean(c, "allow_insecure", p).value_or(false);
+
+        if (type == "email") {
+            ch.type = ChannelType::Email;
+            const YAML::Node s = c["smtp"];
+            const std::string sp = join(p, "smtp");
+            if (!s)
+                r.error(c, sp, "campo obrigatório");
+            else if (r.requireMap(s, sp)) {
+                r.checkKeys(s, sp, {"host", "port", "security", "user", "password"});
+                ch.smtpHost = r.str(s, "host", sp, true).value_or("");
+                const std::string sec = r.oneOf(s, "security", sp, {"starttls", "tls", "none"}).value_or("starttls");
+                ch.smtpSecurity = sec == "tls" ? SmtpSecurity::Tls : sec == "none" ? SmtpSecurity::None : SmtpSecurity::StartTls;
+                ch.smtpPort = static_cast<int>(r.integer(s, "port", sp, 1, 65535)
+                                                   .value_or(ch.smtpSecurity == SmtpSecurity::Tls ? 465
+                                                             : ch.smtpSecurity == SmtpSecurity::None ? 25 : 587));
+                ch.smtpUser = r.str(s, "user", sp).value_or("");
+                ch.smtpPassword = r.secret(s, "password", sp);
+                if (!ch.smtpUser.empty() && ch.smtpPassword.kind == SecretRef::Kind::None)
+                    r.error(s, join(sp, "password"), "informe a senha do usuário SMTP: { secret: <nome> }");
+                if (ch.smtpSecurity == SmtpSecurity::None && !ch.allowInsecure && !ch.smtpHost.empty() && !isLocalHost(ch.smtpHost))
+                    r.error(s["security"], join(sp, "security"),
+                            "SMTP sem criptografia expõe a senha na rede; use starttls/tls ou allow_insecure: true");
+            }
+            ch.from = r.str(c, "from", p, true).value_or("");
+            if (!ch.from.empty() && !validEmail(ch.from))
+                r.error(c["from"], join(p, "from"), "endereço de e-mail inválido");
+            if (c["to"] && c["to"].IsScalar())
+                ch.to = {c["to"].Scalar()};
+            else
+                ch.to = r.strings(c, "to", p);
+            if (ch.to.empty())
+                r.error(c, join(p, "to"), "informe ao menos um destinatário");
+            for (const auto& t : ch.to)
+                if (!validEmail(t))
+                    r.error(c["to"], join(p, "to"), "endereço de e-mail inválido: " + t);
+        } else if (type == "webhook") {
+            ch.type = ChannelType::Webhook;
+            ch.url = r.str(c, "url", p, true).value_or("");
+            if (!ch.url.empty()) {
+                const QUrl u(QString::fromStdString(ch.url), QUrl::StrictMode);
+                const QString scheme = u.scheme().toLower();
+                if (!u.isValid() || u.host().isEmpty() || (scheme != "https" && scheme != "http"))
+                    r.error(c["url"], join(p, "url"), "URL inválida (use https://...)");
+                else if (scheme == "http" && !ch.allowInsecure && !isLocalHost(u.host().toStdString()))
+                    r.error(c["url"], join(p, "url"), "use https:// (ou allow_insecure: true para http na rede interna)");
+                if (!u.userInfo().isEmpty())
+                    r.error(c["url"], join(p, "url"), "não coloque usuário e senha na URL; use token: { secret: <nome> }");
+            }
+            const std::string f = r.oneOf(c, "format", p, {"synkro", "slack", "discord", "teams"}).value_or("synkro");
+            ch.format = f == "slack" ? WebhookFormat::Slack : f == "discord" ? WebhookFormat::Discord
+                      : f == "teams" ? WebhookFormat::Teams : WebhookFormat::Synkro;
+            ch.token = r.secret(c, "token", p);
+        } else if (type == "telegram") {
+            ch.type = ChannelType::Telegram;
+            ch.botToken = r.secret(c, "bot_token", p);
+            if (ch.botToken.kind == SecretRef::Kind::None && !c["bot_token"])
+                r.error(c, join(p, "bot_token"), "campo obrigatório: { secret: <nome> } com o token do @BotFather");
+            if (c["chat_id"] && c["chat_id"].IsScalar())
+                ch.chatId = c["chat_id"].Scalar();
+            if (ch.chatId.empty())
+                r.error(c, join(p, "chat_id"), "campo obrigatório (id numérico do chat ou @canal)");
+        }
+        out.channels.push_back(std::move(ch));
+    }
+}
+
 void parseGlobalImpl(Reader& r, const std::optional<YAML::Node>& doc, GlobalConfig& g)
 {
     if (!doc || !r.requireMap(*doc, ""))
         return;
 
-    r.checkKeys(*doc, "", {"version", "instance", "vaults", "defaults", "alerts", "maintenance", "shutdown", "logging"});
+    r.checkKeys(*doc, "", {"version", "instance", "vaults", "defaults", "alerts", "notifications", "maintenance", "shutdown",
+                           "logging"});
+    r.secretSink = &g.secrets;
     if (!(*doc)["version"])
         r.error(*doc, "version", "campo obrigatório");
     else if (auto v = r.integer(*doc, "version", "", 1, 1000); v && *v != 1)
@@ -1188,6 +1340,9 @@ void parseGlobalImpl(Reader& r, const std::optional<YAML::Node>& doc, GlobalConf
             g.alertEventLog = r.boolean(a, "windows_event_log", "alerts").value_or(true);
         }
     }
+
+    if (const YAML::Node n = (*doc)["notifications"])
+        parseNotifications(r, n, g.notifications);
 
     if (const YAML::Node m = (*doc)["maintenance"]) {
         if (r.requireMap(m, "maintenance")) {
@@ -1516,6 +1671,12 @@ ConfigSet loadConfig(const std::wstring& directory, const LoadOptions& options)
     // Segredos referenciados precisam estar cadastrados (só os nomes são lidos).
     if (options.checkSecrets) {
         const SecretStore store(options.secretsFile.empty() ? secretsFile() : options.secretsFile);
+        for (const auto& s : set.global.secrets) {
+            if (!store.contains(s.name))
+                set.diagnostics.push_back({Severity::Warning, L"synkro.yml", s.line, 1, s.key,
+                                           "segredo \"" + s.name + "\" não cadastrado nesta máquina; cadastre com: "
+                                           "synkro-worker secret set " + s.name});
+        }
         for (const auto& j : set.jobs) {
             for (const auto& s : j.secrets) {
                 if (!store.contains(s.name))

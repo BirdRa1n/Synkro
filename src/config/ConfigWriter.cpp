@@ -199,6 +199,58 @@ std::string emitGlobal(const GlobalConfig& g)
       << "  tray: " << (g.alertTray ? "true" : "false") << "\n"
       << "  windows_event_log: " << (g.alertEventLog ? "true" : "false") << "\n";
 
+    const NotificationsConfig& n = g.notifications;
+    if (!n.channels.empty() || n.repeatEverySeconds != 24 * 3600) {
+        o << "\nnotifications:\n"
+          << "  repeat_every: " << (n.repeatEverySeconds == 0 ? std::string("never") : formatDuration(n.repeatEverySeconds))
+          << "\n";
+        if (!n.channels.empty())
+            o << "  channels:\n";
+        for (const auto& c : n.channels) {
+            static const char* types[] = {"email", "webhook", "telegram"};
+            o << "    - id: " << c.id << "\n"
+              << "      type: " << types[static_cast<int>(c.type)] << "\n";
+            if (!c.enabled)
+                o << "      enabled: false\n";
+            o << "      min_severity: " << (c.criticalOnly ? "critical" : "warning") << "\n"
+              << "      resolved: " << (c.resolved ? "true" : "false") << "\n";
+            if (c.dailyReportAt >= 0)
+                o << "      daily_report: " << quote(describeTime(c.dailyReportAt)) << "\n";
+            if (c.timeoutSeconds != 30)
+                o << "      timeout: " << formatDuration(c.timeoutSeconds) << "\n";
+            if (c.allowInsecure)
+                o << "      allow_insecure: true\n";
+            switch (c.type) {
+            case ChannelType::Email: {
+                static const char* sec[] = {"starttls", "tls", "none"};
+                o << "      smtp:\n"
+                  << "        host: " << quote(c.smtpHost) << "\n"
+                  << "        port: " << c.smtpPort << "\n"
+                  << "        security: " << sec[static_cast<int>(c.smtpSecurity)] << "\n";
+                if (!c.smtpUser.empty())
+                    o << "        user: " << quote(c.smtpUser) << "\n";
+                if (c.smtpPassword.kind != SecretRef::Kind::None)
+                    o << "        password: " << secret(c.smtpPassword) << "\n";
+                o << "      from: " << quote(c.from) << "\n"
+                  << "      to: " << quotedList(c.to) << "\n";
+                break;
+            }
+            case ChannelType::Webhook: {
+                static const char* fmt[] = {"synkro", "slack", "discord", "teams"};
+                o << "      url: " << quote(c.url) << "\n"
+                  << "      format: " << fmt[static_cast<int>(c.format)] << "\n";
+                if (c.token.kind != SecretRef::Kind::None)
+                    o << "      token: " << secret(c.token) << "\n";
+                break;
+            }
+            case ChannelType::Telegram:
+                o << "      bot_token: " << secret(c.botToken) << "\n"
+                  << "      chat_id: " << quote(c.chatId) << "\n";
+                break;
+            }
+        }
+    }
+
     if (g.scrubSchedule) {
         o << "\nmaintenance:\n  scrub:\n"
           << "    schedule: " << trigger(*g.scrubSchedule) << "\n"

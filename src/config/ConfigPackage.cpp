@@ -74,6 +74,8 @@ Result<std::string> exportPackage(const ConfigSet& set, const std::vector<std::s
             jobs.push_back(&j);
 
     std::set<std::string> secrets;
+    for (const auto& s : set.global.secrets)
+        secrets.insert(s.name);
     for (const auto* j : jobs)
         for (const auto& s : j->secrets)
             secrets.insert(s.name);
@@ -345,6 +347,8 @@ Result<ImportReport> importPackage(const ConfigPackage& pkg, const ImportOptions
         if (auto names = store.names())
             have.insert(names.value().begin(), names.value().end());
         std::set<std::string> needed(pkg.secrets.begin(), pkg.secrets.end());
+        for (const auto& s : result.global.secrets)
+            needed.insert(s.name);
         for (const auto& j : result.jobs)
             for (const auto& s : j.secrets)
                 needed.insert(s.name);

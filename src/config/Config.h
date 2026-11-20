@@ -62,6 +62,48 @@ struct VaultConfig {
     double freeSpaceAlert = 0.15;
 };
 
+// ---- Notificações externas ---------------------------------------------------
+
+enum class ChannelType { Email, Webhook, Telegram };
+enum class WebhookFormat { Synkro, Slack, Discord, Teams };
+enum class SmtpSecurity { StartTls, Tls, None };
+
+struct NotificationChannel {
+    std::string id;
+    ChannelType type = ChannelType::Webhook;
+    bool enabled = true;
+    bool criticalOnly = false;    // min_severity: critical
+    bool resolved = true;         // avisa quando o alerta é resolvido
+    int dailyReportAt = -1;       // minutos desde 00:00; -1 = sem relatório diário
+    std::int64_t timeoutSeconds = 30;
+    bool allowInsecure = false;   // http:// ou SMTP sem TLS fora desta máquina
+
+    // email
+    std::string smtpHost;
+    int smtpPort = 0;
+    SmtpSecurity smtpSecurity = SmtpSecurity::StartTls;
+    std::string smtpUser;
+    SecretRef smtpPassword;
+    std::string from;
+    std::vector<std::string> to;
+
+    // webhook
+    std::string url;
+    WebhookFormat format = WebhookFormat::Synkro;
+    SecretRef token;              // Authorization: Bearer <token>
+
+    // telegram
+    SecretRef botToken;
+    std::string chatId;
+};
+
+struct NotificationsConfig {
+    std::int64_t repeatEverySeconds = 24 * 3600; // lembrete de alerta aberto; 0 = nunca
+    std::vector<NotificationChannel> channels;
+
+    const NotificationChannel* find(const std::string& id) const;
+};
+
 // ---- Geral (synkro.yml) ------------------------------------------------------
 
 struct GlobalConfig {
@@ -76,6 +118,9 @@ struct GlobalConfig {
     std::int64_t alertNoSuccessForSeconds = 26 * 3600;
     bool alertTray = true;
     bool alertEventLog = true;
+
+    NotificationsConfig notifications;
+    std::vector<SecretUse> secrets; // referenciados no synkro.yml (notificações)
 
     std::optional<ScheduleTrigger> scrubSchedule;
     double scrubSample = 0.10;
