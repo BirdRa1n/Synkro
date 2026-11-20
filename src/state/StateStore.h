@@ -41,6 +41,22 @@ struct AlertRow {
     QDateTime lastSeenAt;
 };
 
+// Item da fila de notificações externas (um por canal).
+struct OutboxRow {
+    std::int64_t id = 0;
+    std::string channel;
+    std::string kind;       // alert | reminder | resolved | report | test
+    std::string code, subject;
+    std::string severity;   // warning | critical | info
+    std::string message;    // pt-BR
+    QDateTime createdAt;    // UTC
+    QDateTime openedAt;     // abertura do alerta (lembretes e resoluções)
+    int attempts = 0;
+    QDateTime nextAttemptAt;
+    std::string status;     // pending | sent | expired | dropped
+    std::string lastError;
+};
+
 // Banco local de estado (<dados>\state\synkro.db, architecture.md §5): histórico
 // de execuções, último contato com cada cofre e alertas. É cache: os cofres
 // continuam sendo a fonte da verdade dos backups.
@@ -63,8 +79,27 @@ public:
     Status resolveAlert(const std::string& code, const std::string& subject);
     std::vector<AlertRow> openAlerts();
 
+    // Fila de notificações (notify/Notifier.h).
+    Status enqueueNotification(const OutboxRow& row);
+    std::vector<OutboxRow> pendingNotifications(const QDateTime& nowUtc, int limit = 500);
+    // Última notificação de abertura/lembrete deste alerta para o canal, desde a abertura.
+    std::optional<OutboxRow> lastAlertNotification(const std::string& channel, const std::string& code,
+                                                   const std::string& subject, const QDateTime& openedSince);
+    Status markNotifications(const std::vector<std::int64_t>& ids, const std::string& status);
+    Status deferNotifications(const std::vector<std::int64_t>& ids, const std::string& error, const QDateTime& next);
+    Result<int> expireNotifications(const QDateTime& olderThanUtc);
+    // Canais com envio falhando repetidamente: canal -> último erro.
+    std::vector<std::pair<std::string, std::string>> failingChannels(int minAttempts);
+    std::vector<OutboxRow> recentNotifications(int limit);
+    // Alertas resolvidos desde `sinceUtc` que foram notificados ao canal e
+    // ainda não tiveram a resolução enfileirada.
+    std::vector<AlertRow> resolvedUnannounced(const std::string& channel, const QDateTime& sinceUtc);
+
     std::string getValue(const std::string& key);
     Status setValue(const std::string& key, const std::string& value);
+    // Grava o valor só se for diferente do atual; true se gravou (atômico
+    // entre processos: serve para "uma vez por dia").
+    Result<bool> claimValue(const std::string& key, const std::string& value);
 
 private:
     explicit StateStore(db::SqliteDb db) : m_db(std::move(db)) {}

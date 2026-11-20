@@ -2,6 +2,7 @@
 
 #include "platform/windows/Win32.h"
 
+#include <QTimeZone>
 #include <QUuid>
 
 #include <sqlite3.h>
@@ -135,6 +136,12 @@ CREATE TABLE IF NOT EXISTS alerts (
     id INTEGER PRIMARY KEY, code TEXT NOT NULL, subject TEXT NOT NULL, severity TEXT, message TEXT,
     opened_at TEXT, last_seen_at TEXT, resolved_at TEXT);
 CREATE UNIQUE INDEX IF NOT EXISTS alerts_open ON alerts (code, subject) WHERE resolved_at IS NULL;
+CREATE TABLE IF NOT EXISTS outbox (
+    id INTEGER PRIMARY KEY, channel TEXT NOT NULL, kind TEXT NOT NULL, code TEXT, subject TEXT, severity TEXT,
+    message TEXT, created_at TEXT, opened_at TEXT, attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT,
+    status TEXT NOT NULL DEFAULT 'pending', sent_at TEXT, last_error TEXT);
+CREATE INDEX IF NOT EXISTS outbox_pending ON outbox (status, next_attempt_at);
+CREATE INDEX IF NOT EXISTS outbox_alert ON outbox (channel, code, subject, created_at);
 INSERT OR IGNORE INTO kv (key, value) VALUES ('schema_version', '1');
 )SQL");
 }
@@ -273,6 +280,129 @@ std::vector<AlertRow> StateStore::openAlerts()
     return out;
 }
 
+namespace {
+
+constexpr char kOutboxColumns[] = "id, channel, kind, code, subject, severity, message, created_at, opened_at, attempts, "
+                                  "next_attempt_at, status, last_error";
+
+OutboxRow readOutbox(const Stmt& s)
+{
+    OutboxRow r;
+    r.id = s.integer(0);
+    r.channel = s.text(1);
+    r.kind = s.text(2);
+    r.code = s.text(3);
+    r.subject = s.text(4);
+    r.severity = s.text(5);
+    r.message = s.text(6);
+    r.createdAt = s.time(7);
+    r.openedAt = s.time(8);
+    r.attempts = static_cast<int>(s.integer(9));
+    r.nextAttemptAt = s.time(10);
+    r.status = s.text(11);
+    r.lastError = s.text(12);
+    return r;
+}
+
+std::string idList(const std::vector<std::int64_t>& ids)
+{
+    std::string o;
+    for (auto id : ids)
+        o += (o.empty() ? "" : ",") + std::to_string(id);
+    return o;
+}
+
+} // namespace
+
+Status StateStore::enqueueNotification(const OutboxRow& r)
+{
+    const QDateTime created = r.createdAt.isValid() ? r.createdAt : QDateTime::currentDateTimeUtc();
+    Stmt s(m_db.handle(), "INSERT INTO outbox (channel, kind, code, subject, severity, message, created_at, opened_at, "
+                          "next_attempt_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?7)");
+    s.bind(1, r.channel).bind(2, r.kind).bind(3, r.code).bind(4, r.subject).bind(5, r.severity).bind(6, r.message)
+        .bind(7, created).bind(8, r.openedAt);
+    return stepDone(s, "outbox");
+}
+
+std::vector<OutboxRow> StateStore::pendingNotifications(const QDateTime& nowUtc, int limit)
+{
+    std::vector<OutboxRow> out;
+    Stmt s(m_db.handle(), (std::string("SELECT ") + kOutboxColumns
+                           + " FROM outbox WHERE status = 'pending' AND next_attempt_at <= ?1 ORDER BY id LIMIT ?2").c_str());
+    s.bind(1, nowUtc).bind(2, static_cast<std::int64_t>(limit));
+    while (s.ok() && s.step() == SQLITE_ROW)
+        out.push_back(readOutbox(s));
+    return out;
+}
+
+std::optional<OutboxRow> StateStore::lastAlertNotification(const std::string& channel, const std::string& code,
+                                                           const std::string& subject, const QDateTime& openedSince)
+{
+    Stmt s(m_db.handle(), (std::string("SELECT ") + kOutboxColumns
+                           + " FROM outbox WHERE channel = ?1 AND code = ?2 AND subject = ?3 AND kind IN ('alert', 'reminder') "
+                             "AND created_at >= ?4 AND status IN ('pending', 'sent') ORDER BY id DESC LIMIT 1").c_str());
+    s.bind(1, channel).bind(2, code).bind(3, subject).bind(4, openedSince.isValid() ? openedSince : QDateTime::fromSecsSinceEpoch(0, QTimeZone::UTC));
+    if (s.ok() && s.step() == SQLITE_ROW)
+        return readOutbox(s);
+    return std::nullopt;
+}
+
+Status StateStore::markNotifications(const std::vector<std::int64_t>& ids, const std::string& status)
+{
+    if (ids.empty())
+        return Status::success();
+    Stmt s(m_db.handle(), ("UPDATE outbox SET status = ?1, sent_at = CASE WHEN ?1 = 'sent' THEN ?2 ELSE sent_at END "
+                           "WHERE id IN (" + idList(ids) + ")").c_str());
+    s.bind(1, status).bind(2, QDateTime::currentDateTimeUtc());
+    return stepDone(s, "outbox");
+}
+
+Status StateStore::deferNotifications(const std::vector<std::int64_t>& ids, const std::string& error, const QDateTime& next)
+{
+    if (ids.empty())
+        return Status::success();
+    Stmt s(m_db.handle(), ("UPDATE outbox SET attempts = attempts + 1, last_error = ?1, next_attempt_at = ?2 "
+                           "WHERE id IN (" + idList(ids) + ")").c_str());
+    s.bind(1, error).bind(2, next);
+    return stepDone(s, "outbox");
+}
+
+Result<int> StateStore::expireNotifications(const QDateTime& olderThanUtc)
+{
+    Stmt s(m_db.handle(), "UPDATE outbox SET status = 'expired' WHERE status = 'pending' AND created_at < ?1");
+    s.bind(1, olderThanUtc);
+    if (auto st = stepDone(s, "outbox"); !st)
+        return st.error();
+    const int n = sqlite3_changes(m_db.handle());
+    // Histórico enviado fica 90 dias.
+    Stmt del(m_db.handle(), "DELETE FROM outbox WHERE status <> 'pending' AND created_at < ?1");
+    del.bind(1, olderThanUtc.addDays(-90));
+    (void)stepDone(del, "outbox");
+    return n;
+}
+
+std::vector<std::pair<std::string, std::string>> StateStore::failingChannels(int minAttempts)
+{
+    std::vector<std::pair<std::string, std::string>> out;
+    // Coluna "solta" com MAX(): o SQLite devolve last_error da linha mais recente.
+    Stmt s(m_db.handle(), "SELECT channel, last_error, MAX(id) FROM outbox WHERE status = 'pending' AND attempts >= ?1 "
+                          "GROUP BY channel ORDER BY channel");
+    s.bind(1, static_cast<std::int64_t>(minAttempts));
+    while (s.ok() && s.step() == SQLITE_ROW)
+        out.emplace_back(s.text(0), s.text(1));
+    return out;
+}
+
+std::vector<OutboxRow> StateStore::recentNotifications(int limit)
+{
+    std::vector<OutboxRow> out;
+    Stmt s(m_db.handle(), (std::string("SELECT ") + kOutboxColumns + " FROM outbox ORDER BY id DESC LIMIT ?1").c_str());
+    s.bind(1, static_cast<std::int64_t>(limit));
+    while (s.ok() && s.step() == SQLITE_ROW)
+        out.push_back(readOutbox(s));
+    return out;
+}
+
 std::string StateStore::getValue(const std::string& key)
 {
     Stmt s(m_db.handle(), "SELECT value FROM kv WHERE key = ?1");
@@ -280,6 +410,42 @@ std::string StateStore::getValue(const std::string& key)
     if (s.ok() && s.step() == SQLITE_ROW)
         return s.text(0);
     return {};
+}
+
+Result<bool> StateStore::claimValue(const std::string& key, const std::string& value)
+{
+    Stmt s(m_db.handle(), "INSERT INTO kv (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value "
+                          "WHERE kv.value IS NOT excluded.value");
+    s.bind(1, key).bind(2, value);
+    if (auto st = stepDone(s, "kv"); !st)
+        return st.error();
+    return sqlite3_changes(m_db.handle()) > 0;
+}
+
+std::vector<AlertRow> StateStore::resolvedUnannounced(const std::string& channel, const QDateTime& sinceUtc)
+{
+    std::vector<AlertRow> out;
+    Stmt s(m_db.handle(),
+           "SELECT a.code, a.subject, a.severity, a.message, a.opened_at, a.resolved_at FROM alerts a "
+           "WHERE a.resolved_at IS NOT NULL AND a.resolved_at >= ?2 "
+           "AND EXISTS (SELECT 1 FROM outbox o WHERE o.channel = ?1 AND o.code = a.code AND o.subject = a.subject "
+           "  AND o.kind IN ('alert', 'reminder') AND o.status IN ('pending', 'sent') "
+           "  AND o.created_at >= a.opened_at AND o.created_at <= a.resolved_at) "
+           "AND NOT EXISTS (SELECT 1 FROM outbox r WHERE r.channel = ?1 AND r.code = a.code AND r.subject = a.subject "
+           "  AND r.kind = 'resolved' AND r.opened_at = a.opened_at) "
+           "ORDER BY a.resolved_at");
+    s.bind(1, channel).bind(2, sinceUtc);
+    while (s.ok() && s.step() == SQLITE_ROW) {
+        AlertRow a;
+        a.code = s.text(0);
+        a.subject = s.text(1);
+        a.severity = s.text(2) == "critical" ? AlertSeverity::Critical : AlertSeverity::Warning;
+        a.message = s.text(3);
+        a.openedAt = s.time(4);
+        a.lastSeenAt = s.time(5); // aqui: momento da resolução
+        out.push_back(std::move(a));
+    }
+    return out;
 }
 
 Status StateStore::setValue(const std::string& key, const std::string& value)
