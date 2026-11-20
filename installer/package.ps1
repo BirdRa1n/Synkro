@@ -70,6 +70,10 @@ try {
         & "$QtDir\bin\windeployqt.exe" --release --no-translations --no-system-d3d-compiler --no-opengl-sw `
             --compiler-runtime --dir $stage (Join-Path $stage 'synkro-desktop.exe') (Join-Path $stage 'synkro-worker.exe') | Out-Null
     }
+    # Notificações por e-mail/HTTPS: sem o backend TLS (Schannel) o envio falharia só em campo.
+    foreach ($required in 'Qt6Network.dll', 'tls\qschannelbackend.dll') {
+        if (-not (Test-Path (Join-Path $stage $required))) { throw "windeployqt não copiou $required" }
+    }
 
     Copy-Item (Join-Path $PSScriptRoot 'install.ps1'), (Join-Path $PSScriptRoot 'uninstall.ps1') $stage
     New-Item -ItemType Directory -Force (Join-Path $stage 'docs'), (Join-Path $stage 'examples') | Out-Null
