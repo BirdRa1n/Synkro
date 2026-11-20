@@ -124,8 +124,31 @@ Com `schedule_catch_up: true` (padrão), um horário perdido com o PC desligado 
 | `source_disk_health` | aviso/crítico | O disco da **origem** dá sinais de falha | Urgente: o PDV corre risco; conferir o backup e trocar o disco |
 | `scrub_problems` | crítico | A verificação periódica achou arquivos corrompidos/ausentes que não conseguiu reparar | Rodar `verify` no cofre; considerar trocar o disco |
 | `restore_test_failed` | crítico | O teste de restauração de um banco falhou | `synkro-worker restore-test --job <id>` mostra o detalhe |
+| `notify_failed` | aviso | Um canal de notificação não consegue entregar (3 tentativas) | `synkro-worker notify list` mostra o erro; ver seção 5.2 |
 
 Alertas se resolvem sozinhos quando a condição some.
+
+### 5.2. Avisos por e-mail, webhook e Telegram
+
+Configure os canais em `notifications` no `synkro.yml` ([configuration.md §5.1](configuration.md#51-notificações-externas-notifications)).
+
+1. Cadastre as senhas e os tokens como administrador: `synkro-worker secret set smtp-suporte`.
+2. Teste cada canal: `synkro-worker notify test` (ou `--channel ID` para um só). A mensagem de teste é enviada na hora, fora da fila.
+3. Pronto: os alertas novos saem ao fim de cada backup e na manutenção (a cada 15 min).
+
+Para ver o que foi enviado, o que está pendente e o último erro de cada envio: `synkro-worker notify list`. Para reenviar já os pendentes, sem esperar o intervalo de nova tentativa: `synkro-worker notify`.
+
+| Erro | Causa provável |
+|---|---|
+| `servidor não encontrado (DNS)` | Endereço errado ou PDV sem internet |
+| `o servidor SMTP não oferece STARTTLS` | Servidor que usa TLS direto: `security: tls`, porta 465 |
+| `o servidor SMTP recusou autenticação: 535 ...` | Usuário ou senha errados. No Gmail e no Microsoft 365, use uma *senha de app*. |
+| `falha no TLS (certificado inválido ou não confiável)` | Certificado próprio de servidor interno: instale-o no Windows ou use `allow_insecure: true` |
+| `o servidor respondeu HTTP 401/403 (token recusado)` | Token do webhook ou do bot errado ou revogado |
+| `o servidor respondeu HTTP 404` | O webhook foi apagado no Slack, Discord ou Teams. Para o Telegram, confira o `chat_id` e se o bot está no grupo. |
+| `sem acesso aos segredos` | O comando foi rodado por um usuário comum. O worker agendado (SYSTEM) entrega na próxima passada. |
+
+O **relatório diário** (`daily_report: "08:00"`) é o sinal de vida do PDV: se ele não chegar num dia, o computador ficou desligado ou o Synkro parou de rodar.
 
 ---
 

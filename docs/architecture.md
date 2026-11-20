@@ -550,8 +550,26 @@ O Synkro **nunca falha em silêncio**. Alertas exibidos no dashboard, no ícone 
 | Disco com alerta SMART | Crítico |
 | Corrupção detectada na verificação | Crítico |
 | Tarefa do Task Scheduler ausente/alterada | Crítico |
+| Teste de restauração falhou | Crítico |
+| Canal de notificação sem conseguir entregar (3 tentativas) | Atenção |
 
-O desktop inicia com o Windows (bandeja). Notificações externas (e-mail/webhook) ficam para a Fase 5.
+O desktop inicia com o Windows (bandeja).
+
+### 12.1. Notificações externas (Fase 5)
+
+Os mesmos alertas saem da máquina por **e-mail (SMTP com STARTTLS/TLS), webhook (JSON próprio, Slack, Discord, Teams) ou Telegram** ([configuration.md §5.1](configuration.md#51-notificações-externas-notifications)).
+
+- **Fila (`outbox` no banco de estado).** O cálculo dos alertas continua em `state/Alerts`. O módulo `notify` compara os alertas abertos e os resolvidos com o que cada canal já recebeu e enfileira o que falta: alerta novo ou que piorou, lembrete (`repeat_every`), resolução e relatório diário. Como a decisão depende só do estado, não importa quem abriu ou resolveu o alerta: o desktop ou outra execução do worker. O relatório diário é reservado de forma atômica (`claimValue`), então sai uma vez por dia mesmo com dois processos.
+- **Entrega só pelo worker.** O worker roda como SYSTEM e é o único que lê `secrets.dat`. Ele entrega ao fim de cada backup, na manutenção (a cada 15 min) e no `notify`.
+  - Uma trava global garante um envio por vez.
+  - Os itens pendentes de um canal vão numa mensagem só, com até 50 itens.
+  - Se o envio falhar, os itens ficam na fila e são reenviados com espera crescente, de 5 min até 1 h. Depois de 3 dias, expiram.
+  - Um usuário comum sem acesso aos segredos não conta como falha do canal.
+- **Transporte.** Qt Network com o backend TLS do Windows (Schannel), que usa o repositório de certificados do sistema e o proxy do sistema.
+  - Não segue redirecionamentos.
+  - Os erros nunca incluem a URL nem credenciais.
+  - O cliente SMTP é síncrono (EHLO, STARTTLS, AUTH PLAIN/LOGIN), e a mensagem vai em UTF-8 com corpo base64 e assunto RFC 2047.
+- **Falha silenciosa do próprio aviso.** Depois de 3 tentativas sem sucesso, um canal abre o alerta local `notify_failed`, que aparece na bandeja e nos outros canais. O relatório diário funciona como sinal de vida: a falta dele indica que o PDV está desligado ou que o Synkro parou.
 
 ---
 
@@ -688,7 +706,10 @@ Scrub agendado com reparo entre cofres, saúde SMART, instalador MSI assinado, g
 
 **Saída:** piloto em PDVs reais.
 
-### Fase 5 — Evolução
+### Fase 5 — Evolução (em andamento)
+
+> **Entregue (2026-11-20):** notificações externas por e-mail, webhook (JSON próprio, Slack, Discord, Teams) e Telegram, com fila, novas tentativas, lembretes, aviso de resolução e relatório diário (§12.1).
+
 Notificações externas (e-mail/webhook), compartilhamentos de rede (com credencial guardada via DPAPI), compressão/criptografia do cofre, deduplicação, USN Journal (se as medições justificarem), destino em nuvem com imutabilidade, outras plataformas.
 
 ---

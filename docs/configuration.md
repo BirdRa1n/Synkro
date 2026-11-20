@@ -146,6 +146,86 @@ logging:
   keep: 30d
 ```
 
+### 5.1. Notificações externas (`notifications`)
+
+Os alertas (architecture.md §12) aparecem na bandeja e no Visualizador de Eventos, mas só de quem está na frente da máquina. Os canais de `notifications` levam os mesmos alertas para fora, por e-mail, webhook ou Telegram:
+
+```yaml
+notifications:
+  repeat_every: 24h                   # lembrete de alerta que continua aberto; "never" desliga (mínimo 1h)
+  channels:
+    - id: suporte                     # a-z, 0-9 e hífen
+      type: email
+      min_severity: warning           # warning (padrão) | critical
+      resolved: true                  # avisa quando o problema é resolvido (padrão)
+      daily_report: "08:00"           # opcional: resumo diário das tarefas, cofres e alertas
+      timeout: 30s                    # de 5s a 5min
+      smtp:
+        host: smtp.example.com
+        port: 587                     # padrão: 587 (starttls), 465 (tls), 25 (none)
+        security: starttls            # starttls | tls | none
+        user: backup@example.com
+        password: { secret: smtp-suporte }
+      from: backup@example.com
+      to: [suporte@example.com, dono@example.com]
+
+    - id: central
+      type: webhook
+      url: https://monitor.example.com/synkro
+      format: synkro                  # synkro (JSON completo) | slack | discord | teams
+      token: { secret: central-token }  # opcional: enviado como "Authorization: Bearer <token>"
+
+    - id: celular-dono
+      type: telegram
+      min_severity: critical
+      bot_token: { secret: telegram-bot }   # token do @BotFather
+      chat_id: "123456789"            # id do chat, do grupo (-100...) ou @canal
+```
+
+**O que é avisado em cada canal:**
+
+| Evento | Quando |
+|---|---|
+| Alerta | Na primeira avaliação depois de o alerta abrir. Também se ele piorar de aviso para crítico. Um canal recém-criado recebe os alertas que já estavam abertos. |
+| Lembrete | A cada `repeat_every` enquanto o alerta continuar aberto. |
+| Resolvido | Quando um alerta avisado por esse canal some (`resolved: false` desliga). |
+| Relatório diário | Uma vez por dia, na primeira passada depois de `daily_report`. Se o PC estava desligado no horário, sai assim que ele ligar. Funciona como sinal de vida: se o relatório não chegar, o PDV está desligado ou o Synkro parou. |
+
+**Entrega.** Quem envia é o worker, que roda como SYSTEM e é o único com acesso ao cofre de segredos.
+- **Quando:** ao fim de cada backup, na manutenção (a cada 15 minutos e na inicialização) e com `synkro-worker notify`.
+- **Fila:** tudo passa por uma fila no banco de estado. O que foi avisado junto vai numa mensagem só, com até 50 itens.
+- **Falha:** se o servidor estiver fora do ar, a mensagem continua na fila e é reenviada depois de 5 min, 10 min, 20 min, 40 min e então de hora em hora. Itens que ficam mais de 3 dias sem envio são descartados.
+- **Canal falhando:** depois de 3 tentativas sem sucesso, abre o alerta local `notify_failed`, que aparece na bandeja e nos outros canais.
+
+**Segurança.**
+- Senhas e tokens só aceitam `{ secret: ... }` ou `{ env: ... }`.
+- As mensagens de erro nunca incluem a URL, porque a de um webhook do Slack/Discord contém o próprio token.
+- Fora desta máquina, `http://` e SMTP com `security: none` são recusados.
+- `allow_insecure: true` libera os dois casos acima e também aceita certificado não confiável, para um servidor interno com certificado próprio.
+- O Synkro não segue redirecionamentos: informe a URL final.
+
+**Formato `synkro` (webhook):**
+
+```json
+{
+  "source": "synkro", "version": "0.1.0", "instance": "PDV Matriz", "computer": "PDV01",
+  "sent_at": "2026-11-20T11:00:00Z", "title": "[Synkro] PDV Matriz: 1 alerta crítico", "text": "...",
+  "events": [
+    { "kind": "alert", "code": "last_run_failed", "subject": "pdv-arquivos", "severity": "critical",
+      "message": "a última execução de \"Arquivos do PDV\" falhou: ...",
+      "created_at": "2026-11-20T11:00:00Z", "opened_at": "2026-11-20T10:59:41Z" }
+  ]
+}
+```
+
+- `kind`: `alert` | `reminder` | `resolved` | `report` | `test`.
+- `code`: o mesmo código dos alertas (`no_success`, `vault_absent`, `low_space`, `disk_health`, `restore_test_failed`...).
+
+**Comandos:**
+- `synkro-worker notify test [--channel ID]`: manda uma mensagem de teste. Precisa de administrador, para ler os segredos.
+- `synkro-worker notify`: envia o que está pendente, sem esperar o intervalo de reenvio.
+- `synkro-worker notify list`: mostra o histórico, com as tentativas e o último erro.
+
 ---
 
 ## 6. Tarefa de arquivos (`type: files`)

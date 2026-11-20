@@ -2,7 +2,7 @@
 
 Backup incremental, versionado e redundante para dados críticos no Windows, com foco em sistemas PDV: arquivos fiscais, configurações e bancos de dados (PostgreSQL, MySQL/MariaDB, Firebird, SQL Server, SQLite).
 
-> **Estado:** as Fases 1 (motor e CLI), 2 (automação e bancos de dados), 3 (interface desktop) e 4 (robustez de campo e instalação) estão implementadas. Faltam o instalador MSI assinado, a migração para MSVC e a validação em campo (PDVs e servidores de banco reais). Veja o [roadmap](docs/architecture.md#15-roadmap).
+> **Estado:** as Fases 1 (motor e CLI), 2 (automação e bancos de dados), 3 (interface desktop) e 4 (robustez de campo e instalação) estão implementadas; a Fase 5 começou pelas notificações externas. Faltam o instalador MSI assinado, a migração para MSVC e a validação em campo (PDVs e servidores de banco reais). Veja o [roadmap](docs/architecture.md#15-roadmap).
 
 ## Princípios
 
@@ -32,6 +32,7 @@ Backup incremental, versionado e redundante para dados críticos no Windows, com
 | Snapshot VSS da origem (requer administrador/SYSTEM) | ✅ |
 | Agendador de Tarefas como SYSTEM, tarefa de manutenção e `config apply` (requer administrador) | ✅ |
 | Estado local, alertas (backup atrasado, cofre ausente, pouco espaço, falhas) e Visualizador de Eventos | ✅ |
+| Notificações por e-mail, webhook (Slack, Discord, Teams ou JSON) e Telegram, com fila, novas tentativas, lembretes e relatório diário (`notifications`, `notify`) | ✅ |
 | Verificação periódica com reparo a partir de outro cofre (`maintenance --scrub`) | ✅ |
 | Desligamento seguro após sucesso, com contagem regressiva e cancelamento | ✅ |
 | Saúde dos discos (SMART via WMI) na checagem do cofre, nos alertas e no painel | ✅ |
@@ -128,6 +129,8 @@ synkro-worker backup --source C:\PDV --vault E:\ --job-id avulso   # sem configu
 # 4. Acompanhar
 synkro-worker status                               # tarefas, cofres e alertas (sai com 2 se houver crítico)
 synkro-worker maintenance --scrub                  # verificação dos cofres com reparo
+synkro-worker notify test                          # como administrador: testa e-mail/webhook/Telegram
+synkro-worker notify list                          # o que foi avisado, tentativas e erros
 synkro-worker runs  --vault E:\ --job pdv-arquivos
 synkro-worker dumps --vault E:\ --job pdv-postgres
 

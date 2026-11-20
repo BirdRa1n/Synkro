@@ -32,6 +32,30 @@ alerts:
   tray: true
   windows_event_log: true
 
+# Avisos fora da máquina (docs/configuration.md §5.1). Senhas e tokens ficam no
+# cofre de segredos: synkro-worker secret set <nome>. Teste: synkro-worker notify test
+notifications:
+  repeat_every: 24h                   # lembrete enquanto o alerta continuar aberto
+  channels:
+    - id: suporte
+      type: email
+      min_severity: warning
+      daily_report: "08:00"           # resumo diário: prova de que o PDV está vivo
+      smtp:
+        host: smtp.example.com
+        port: 587
+        security: starttls
+        user: backup@example.com
+        password: { secret: smtp-suporte }
+      from: backup@example.com
+      to: [suporte@example.com]
+
+    - id: celular-dono
+      type: telegram
+      min_severity: critical
+      bot_token: { secret: telegram-bot }
+      chat_id: "123456789"
+
 maintenance:
   scrub:
     schedule: { weekly: { days: [sun], at: "03:00" } }
