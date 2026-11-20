@@ -22,7 +22,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(SynkroCompilerOptions)
 include(SynkroDependencies)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Network)
 qt_standard_project_setup()
 
 add_subdirectory(src)

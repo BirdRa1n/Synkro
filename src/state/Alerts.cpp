@@ -212,6 +212,13 @@ std::vector<AlertRow> refreshAlerts(const config::ConfigSet& set, StateStore& st
         if (!failed.empty())
             desired.push_back({"restore_test_failed", job.id, AlertSeverity::Critical, failed, {}, {}});
     }
+    // Canal de notificação que não consegue entregar: aviso local (a bandeja e
+    // os outros canais ainda avisam).
+    for (const auto& [channel, error] : state.failingChannels(3)) {
+        if (const auto* ch = set.global.notifications.find(channel); ch && ch->enabled)
+            desired.push_back({"notify_failed", channel, AlertSeverity::Warning,
+                               "as notificações do canal \"" + channel + "\" não estão sendo entregues: " + error, {}, {}});
+    }
     auto ev = reconcileAlerts(state, desired);
     if (!ev)
         return desired;

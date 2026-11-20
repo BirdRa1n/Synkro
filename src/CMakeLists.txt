@@ -1,5 +1,5 @@
-# libsynkro — motor do Synkro. Depende apenas de Qt Core e de APIs do Windows;
-# nunca de Qt Widgets.
+# libsynkro — motor do Synkro. Depende de Qt Core, Qt Network (só para as
+# notificações externas) e de APIs do Windows; nunca de Qt Widgets.
 
 add_library(synkro_core STATIC
     catalog/Catalog.h
@@ -94,6 +94,10 @@ add_library(synkro_core STATIC
     platform/windows/Volume.h
     platform/windows/Volume.cpp
 
+    notify/Notifier.h
+    notify/Notifier.cpp
+    notify/Transport.cpp
+
     process/ProcessRunner.h
     process/ProcessRunner.cpp
 
@@ -128,7 +132,7 @@ add_library(Synkro::Core ALIAS synkro_core)
 target_include_directories(synkro_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(synkro_core
     PUBLIC  Qt6::Core
-    PRIVATE bcrypt crypt32 advapi32 yaml-cpp::yaml-cpp vssapi ole32 oleaut32 taskschd wbemuuid Synkro::SQLite3 Synkro::Zstd
+    PRIVATE Qt6::Network bcrypt crypt32 advapi32 yaml-cpp::yaml-cpp vssapi ole32 oleaut32 taskschd wbemuuid Synkro::SQLite3 Synkro::Zstd
 )
 target_compile_definitions(synkro_core PUBLIC
     SYNKRO_VERSION_STRING="${PROJECT_VERSION}"
