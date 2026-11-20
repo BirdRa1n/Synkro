@@ -15,6 +15,7 @@
 #include "database/DumpStore.h"
 #include "database/RestoreTest.h"
 #include "engine/Scrub.h"
+#include "notify/Notifier.h"
 #include "engine/VaultOps.h"
 #include "platform/windows/Locks.h"
 #include "platform/windows/Shutdown.h"
@@ -54,6 +55,29 @@ std::optional<synkro::StateStore> openState()
 std::vector<synkro::AlertRow> evaluateAlerts(const synkro::config::ConfigSet& set, synkro::StateStore& state)
 {
     return synkro::refreshAlerts(set, state);
+}
+
+// Enfileira o que há para avisar e entrega aos canais (e-mail, webhook,
+// Telegram). Nunca muda o código de saída: notificação é melhor esforço com
+// fila e novas tentativas.
+void notifyChannels(const synkro::config::ConfigSet& set, synkro::StateStore& state, bool ignoreBackoff = false)
+{
+    if (set.global.notifications.channels.empty())
+        return;
+    const auto queued = synkro::notify::enqueue(set, state, QDateTime::currentDateTimeUtc());
+    synkro::notify::DeliveryOptions opt;
+    opt.ignoreBackoff = ignoreBackoff;
+    const auto report = synkro::notify::deliver(set, state, opt);
+    (void)queued;
+    for (const auto& c : report.channels) {
+        if (c.ok)
+            out() << "notificação enviada: " << q(c.channel) << " (" << c.items << " item(ns))" << Qt::endl;
+        else
+            err() << "notificação para " << q(c.channel) << " não enviada (" << q(c.error) << "); nova tentativa depois"
+                  << Qt::endl;
+    }
+    if (report.expired > 0)
+        err() << "aviso: " << report.expired << " notificação(ões) com mais de 3 dias descartada(s) sem envio" << Qt::endl;
 }
 
 bool anotherJobRunning(const synkro::config::ConfigSet& set, const std::string& self)
@@ -154,6 +178,7 @@ int runConfiguredJob(const synkro::config::ConfigSet& set, const synkro::config:
         const auto alerts = evaluateAlerts(set, *state);
         if (!alerts.empty())
             out() << "\nalertas abertos: " << alerts.size() << " (synkro-worker status)" << Qt::endl;
+        notifyChannels(set, *state);
     }
 
     if (job.shutdownAfter) {
@@ -304,6 +329,83 @@ int cmdMaintenance(const QStringList& args)
     // 4. Alertas que dependem do tempo (backup atrasado, cofre ausente...).
     const auto alerts = evaluateAlerts(set, *state);
     out() << "alertas abertos: " << alerts.size() << Qt::endl;
+
+    // 5. Notificações externas (novos alertas, lembretes, relatório diário, reenvios).
+    notifyChannels(set, *state);
+    return ExitOk;
+}
+
+int cmdNotify(const QStringList& args)
+{
+    const QString sub = args.isEmpty() ? QStringLiteral("send") : args.first();
+    QCommandLineParser p;
+    p.addOption({QStringLiteral("config-dir"), QStringLiteral("Pasta de configuração."), QStringLiteral("pasta")});
+    p.addOption({QStringLiteral("channel"), QStringLiteral("Canal (notify test)."), QStringLiteral("id")});
+    p.addOption({QStringLiteral("limit"), QStringLiteral("Quantos itens listar (notify list)."), QStringLiteral("N")});
+    if (!parseSub(p, args.isEmpty() ? args : args.mid(1)))
+        return (usage(), ExitUsage);
+
+    synkro::config::ConfigSet set;
+    loadAndReport(configDirFrom(p), set, true);
+    const auto& channels = set.global.notifications.channels;
+
+    if (sub == QLatin1String("test")) {
+        std::vector<std::string> ids;
+        if (p.isSet(QStringLiteral("channel")))
+            ids.push_back(p.value(QStringLiteral("channel")).toStdString());
+        else
+            for (const auto& c : channels)
+                ids.push_back(c.id);
+        if (ids.empty()) {
+            err() << "nenhum canal em notifications.channels (synkro.yml)" << Qt::endl;
+            return ExitUsage;
+        }
+        bool allOk = true;
+        for (const auto& id : ids) {
+            out() << "canal " << q(id) << "... " << Qt::flush;
+            if (auto st = synkro::notify::sendTest(set, id, {}); st) {
+                out() << "enviado" << Qt::endl;
+            } else {
+                allOk = false;
+                out() << "FALHOU: " << q(st.error().message) << Qt::endl;
+            }
+        }
+        return allOk ? ExitOk : ExitFailure;
+    }
+
+    auto state = openState();
+    if (!state)
+        return ExitFailure;
+
+    if (sub == QLatin1String("list")) {
+        const int limit = p.isSet(QStringLiteral("limit")) ? std::clamp(p.value(QStringLiteral("limit")).toInt(), 1, 1000) : 30;
+        const auto rows = state->recentNotifications(limit);
+        if (rows.empty())
+            out() << "nenhuma notificação registrada" << Qt::endl;
+        for (const auto& r : rows) {
+            out() << r.createdAt.toLocalTime().toString(QStringLiteral("dd/MM HH:mm")) << "  " << q(r.channel).leftJustified(16)
+                  << " " << q(r.kind).leftJustified(9) << " " << q(r.status).leftJustified(8) << " ";
+            if (r.kind == "report" || r.kind == "test")
+                out() << q(r.kind == "report" ? std::string("relatório diário") : std::string("teste"));
+            else
+                out() << q(r.message);
+            if (r.status == "pending" && r.attempts > 0)
+                out() << "\n" << QString(41, ' ') << "tentativas: " << r.attempts << ", próxima "
+                      << r.nextAttemptAt.toLocalTime().toString(QStringLiteral("dd/MM HH:mm")) << ", erro: " << q(r.lastError);
+            out() << "\n";
+        }
+        out().flush();
+        return ExitOk;
+    }
+
+    if (sub != QLatin1String("send"))
+        return (usage(), ExitUsage);
+    if (channels.empty()) {
+        out() << "nenhum canal em notifications.channels; nada a enviar" << Qt::endl;
+        return ExitOk;
+    }
+    (void)evaluateAlerts(set, *state);
+    notifyChannels(set, *state, true);
     return ExitOk;
 }
 
@@ -457,6 +559,7 @@ int cmdRestoreTest(const QStringList& args)
         (void)state->setValue(key, problem.empty() ? std::string() : "o teste de restauração de " + jobId + " falhou — " + problem);
         (void)state->setValue(key + ":at", QDateTime::currentDateTimeUtc().toString(Qt::ISODate).toStdString());
         (void)evaluateAlerts(set, *state);
+        notifyChannels(set, *state);
     }
     return problem.empty() ? ExitOk : ExitFailure;
 }

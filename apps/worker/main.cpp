@@ -403,7 +403,7 @@ int main(int argc, char* argv[])
         {"restore-db", cmdRestoreDb}, {"restore-test", cmdRestoreTest}, {"verify", cmdVerify},    {"runs", cmdRuns},
         {"dumps", cmdDumps},       {"config", cmdConfig},       {"secret", cmdSecret},
         {"status", cmdStatus},     {"maintenance", cmdMaintenance}, {"schedule", cmdSchedule},
-        {"shutdown", cmdShutdown},
+        {"shutdown", cmdShutdown}, {"notify", cmdNotify},
     };
     for (const auto& [name, handler] : commands) {
         if (command == QLatin1String(name))

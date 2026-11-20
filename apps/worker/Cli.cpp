@@ -58,6 +58,7 @@ void usage()
           << "  maintenance [--scrub]                                aplica mudanças, confere cofres e alertas\n"
           << "  status                                               situação das tarefas, cofres e alertas\n"
           << "  shutdown cancel                                      cancela um desligamento agendado\n"
+          << "  notify [send] | test [--channel ID] | list [--limit N]   notificações por e-mail, webhook e Telegram\n"
           << "\nRecuperação\n"
           << "  restore --vault V --job ID --to PASTA [--run R] [--path P]\n"
           << "  restore-db --vault V --job ID --database DB (--target-database NOVO | --to ARQUIVO) [--run R]\n"
