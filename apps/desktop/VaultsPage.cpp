@@ -19,6 +19,9 @@
 #include <QMessageBox>
 #include <QUrl>
 
+#include <map>
+#include <vector>
+
 using namespace ui;
 
 VaultsPage::VaultsPage()
@@ -48,8 +51,10 @@ void VaultsPage::refresh()
     auto* sources = new QVBoxLayout;
     sources->setSpacing(10);
     sources->addWidget(label(QStringLiteral("ORIGENS"), "caption"));
+    std::vector<std::pair<QWidget*, const synkro::config::JobConfig*>> sourceBoxes;
     for (const auto& j : set.jobs) {
         auto* box = card("insetBox");
+        sourceBoxes.emplace_back(box, &j);
         auto* bl = new QVBoxLayout(box);
         bl->setContentsMargins(14, 10, 14, 10);
         bl->setSpacing(2);
@@ -70,9 +75,8 @@ void VaultsPage::refresh()
     sources->addStretch(1);
     ml->addLayout(sources, 3);
 
-    auto* arrows = new QVBoxLayout;
-    arrows->setContentsMargins(14, 30, 14, 0);
-    arrows->setSpacing(52);
+    auto* links = new FlowLinks;
+    std::map<std::string, std::pair<QWidget*, bool>> targetBoxes; // id → (caixa, conectado)
     auto* targets = new QVBoxLayout;
     targets->setSpacing(14);
     targets->addWidget(label(QStringLiteral("COFRES"), "caption"));
@@ -80,8 +84,8 @@ void VaultsPage::refresh()
         const auto* vc = set.global.findVault(obs.id);
         if (!vc)
             continue;
-        arrows->addWidget(new Arrow(!obs.connected));
         auto* box = card(obs.connected ? "vaultOn" : "vaultOff");
+        targetBoxes[obs.id] = {box, obs.connected};
         auto* bl = new QVBoxLayout(box);
         bl->setContentsMargins(16, 12, 16, 12);
         bl->setSpacing(2);
@@ -106,9 +110,14 @@ void VaultsPage::refresh()
     }
     if (ctx.vaults().empty())
         targets->addWidget(label(QStringLiteral("Nenhum cofre cadastrado."), "muted"));
-    arrows->addStretch(1);
     targets->addStretch(1);
-    ml->addLayout(arrows, 2);
+    std::vector<FlowLinks::Link> edges;
+    for (const auto& [box, job] : sourceBoxes)
+        for (const auto& vid : job->vaults)
+            if (auto it = targetBoxes.find(vid); it != targetBoxes.end())
+                edges.push_back({box, it->second.first, it->second.second});
+    links->setLinks(std::move(edges));
+    ml->addWidget(links, 2);
     ml->addLayout(targets, 3);
     body()->addWidget(map);
 

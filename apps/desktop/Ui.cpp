@@ -8,6 +8,9 @@
 #include <QPainter>
 #include <QPainterPath>
 
+#include <algorithm>
+#include <cmath>
+
 namespace ui {
 
 namespace {
@@ -136,28 +139,87 @@ void UsageBar::paintEvent(QPaintEvent*)
     p.fillRect(QRectF(r.width() * used, 0, r.width() * sec, r.height()), tk().soft);
 }
 
-Arrow::Arrow(bool dashed, QWidget* parent) : QWidget(parent), m_dashed(dashed)
+FlowLinks::FlowLinks(QWidget* parent) : QWidget(parent)
 {
-    setMinimumSize(80, 20);
-    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    setAttribute(Qt::WA_TransparentForMouseEvents);
 }
 
-void Arrow::paintEvent(QPaintEvent*)
+void FlowLinks::setLinks(std::vector<Link> links)
+{
+    m_links = std::move(links);
+    const bool anyActive = std::any_of(m_links.begin(), m_links.end(), [](const Link& l) { return l.active; });
+    if (anyActive && !m_timer)
+        m_timer = startTimer(33);
+    else if (!anyActive && m_timer) {
+        killTimer(m_timer);
+        m_timer = 0;
+    }
+    update();
+}
+
+void FlowLinks::timerEvent(QTimerEvent*)
+{
+    if (!isVisible())
+        return; // tela escondida: nada a desenhar
+    m_phase += 0.012;
+    if (m_phase >= 1.0)
+        m_phase -= 1.0;
+    update();
+}
+
+void FlowLinks::paintEvent(QPaintEvent*)
 {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
-    const QColor color = m_dashed ? tk().dash : tk().accent;
-    QPen pen(color, 2);
-    if (m_dashed)
-        pen.setStyle(Qt::DashLine);
-    p.setPen(pen);
-    const int y = height() / 2;
-    p.drawLine(4, y, width() - 12, y);
-    QPolygonF head;
-    head << QPointF(width() - 12, y - 6) << QPointF(width() - 2, y) << QPointF(width() - 12, y + 6);
-    p.setPen(Qt::NoPen);
-    p.setBrush(color);
-    p.drawPolygon(head);
+    const double w = width();
+    for (const auto& link : m_links) {
+        if (!link.from || !link.to || !link.from->isVisible() || !link.to->isVisible())
+            continue;
+        const QPoint a = mapFromGlobal(link.from->mapToGlobal(QPoint(link.from->width(), link.from->height() / 2)));
+        const QPoint b = mapFromGlobal(link.to->mapToGlobal(QPoint(0, link.to->height() / 2)));
+        const QPointF start(0, a.y()), end(w - 10, b.y());
+        QPainterPath path(start);
+        const double bend = std::max(30.0, (end.x() - start.x()) * 0.5);
+        path.cubicTo(start + QPointF(bend, 0), end - QPointF(bend, 0), end);
+
+        const QColor color = link.active ? tk().accent : tk().dash;
+        p.setBrush(Qt::NoBrush);
+        // Trilho de fundo, mais largo e translúcido.
+        if (link.active) {
+            QColor halo = color;
+            halo.setAlphaF(0.15);
+            p.setPen(QPen(halo, 6, Qt::SolidLine, Qt::RoundCap));
+            p.drawPath(path);
+        }
+        QPen pen(color, 2, link.active ? Qt::SolidLine : Qt::DashLine, Qt::RoundCap);
+        p.setPen(pen);
+        p.setBrush(Qt::NoBrush);
+        p.drawPath(path);
+
+        // Conectores nas pontas.
+        p.setPen(Qt::NoPen);
+        p.setBrush(color);
+        p.drawEllipse(start + QPointF(1, 0), 4, 4);
+        QPolygonF head;
+        head << QPointF(w - 11, b.y() - 5) << QPointF(w - 2, b.y()) << QPointF(w - 11, b.y() + 5);
+        p.drawPolygon(head);
+
+        // Pulsos de dados correndo até o disco.
+        if (link.active) {
+            constexpr int pulses = 3;
+            for (int i = 0; i < pulses; ++i) {
+                const double t = std::fmod(m_phase + double(i) / pulses, 1.0);
+                const QPointF pt = path.pointAtPercent(t);
+                QColor glow = color;
+                glow.setAlphaF(0.25);
+                p.setBrush(glow);
+                p.drawEllipse(pt, 7, 7);
+                p.setBrush(color);
+                p.drawEllipse(pt, 3.5, 3.5);
+            }
+        }
+    }
 }
 
 Page::Page(const QString& title, const QString& subtitle, QWidget* parent) : QWidget(parent)

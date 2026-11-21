@@ -9,6 +9,8 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include <vector>
+
 namespace ui {
 
 enum class Tone { Neutral, Ok, Warn, Error, Accent };
@@ -45,17 +47,30 @@ private:
     double m_used, m_secondary;
 };
 
-// Seta do mapa de redundância (contínua = cofre conectado; tracejada = ausente).
-class Arrow : public QWidget {
+// Ligações animadas do mapa de redundância (estilo editor de fluxo): cada
+// origem liga-se, por uma curva, aos cofres que a tarefa usa. Cofre conectado
+// = curva cheia com pulsos correndo em direção ao disco; ausente = tracejada
+// e parada. As caixas ficam nas colunas vizinhas; a posição é lida delas.
+class FlowLinks : public QWidget {
 public:
-    explicit Arrow(bool dashed, QWidget* parent = nullptr);
-    QSize sizeHint() const override { return {120, 20}; }
+    struct Link {
+        QWidget* from;
+        QWidget* to;
+        bool active;
+    };
+    explicit FlowLinks(QWidget* parent = nullptr);
+    void setLinks(std::vector<Link> links);
+    QSize sizeHint() const override { return {140, 40}; }
+    QSize minimumSizeHint() const override { return {90, 20}; }
 
 protected:
     void paintEvent(QPaintEvent*) override;
+    void timerEvent(QTimerEvent*) override;
 
 private:
-    bool m_dashed;
+    std::vector<Link> m_links;
+    int m_timer = 0;
+    double m_phase = 0.0; // 0..1, avança com o tempo
 };
 
 // Base das telas: cabeçalho (título, subtítulo, ações) + conteúdo rolável.
