@@ -123,14 +123,14 @@ private:
     void testConnection();
     void updateReview();
 
-    QLineEdit *m_name, *m_source, *m_exclude, *m_sentinel;
+    QLineEdit *m_name, *m_exclude, *m_sentinel;
+    class SourceListEditor* m_sources;
+    class WeekScheduleEditor* m_week;
     QComboBox *m_type, *m_engine;
     QLineEdit *m_host, *m_user, *m_password, *m_secretName, *m_databases, *m_sqliteFiles;
     QSpinBox* m_port;
     QLabel* m_connectionResult;
     QListWidget* m_vaults;
-    QCheckBox* m_days[7];
-    QTimeEdit* m_time;
     QCheckBox *m_onStartup, *m_shutdown;
     QTextBrowser* m_review;
     int m_filesPage = 0, m_dbPage = 0;

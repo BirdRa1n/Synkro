@@ -3,6 +3,7 @@
 #include "AppContext.h"
 #include "Format.h"
 #include "Icons.h"
+#include "JobWidgets.h"
 #include "Theme.h"
 #include "Ui.h"
 
@@ -286,9 +287,11 @@ void AddVaultDialog::runCheck()
     m_checkedPath = req.candidatePath;
     const auto& set = AppContext::instance().config();
     for (const auto& j : set.jobs) {
-        if (j.type == "files")
+        if (j.type == "files") {
             req.sourcePaths.push_back(j.files.source);
-        else if (j.type == "database")
+            for (const auto& s : j.files.moreSources)
+                req.sourcePaths.push_back(s.path);
+        } else if (j.type == "database")
             for (const auto& f : j.database.sqliteFiles)
                 req.sourcePaths.push_back(f);
     }
@@ -915,22 +918,13 @@ JobWizard::JobWizard(QWidget* parent) : QWizard(parent)
 
     // 1. Arquivos
     auto* files = new FlowPage;
-    files->setTitle(QStringLiteral("Pasta de origem"));
+    files->setTitle(QStringLiteral("Pastas de origem"));
     auto* ff = new QFormLayout(files);
-    m_source = new QLineEdit;
-    auto* browse = ui::button(QStringLiteral("Escolher…"), QStringLiteral("folder"));
-    connect(browse, &QPushButton::clicked, this, [this] {
-        const QString d = QFileDialog::getExistingDirectory(this, QStringLiteral("Pasta de origem"));
-        if (!d.isEmpty())
-            m_source->setText(QDir::toNativeSeparators(d));
-    });
-    auto* srcRow = new QHBoxLayout;
-    srcRow->addWidget(m_source, 1);
-    srcRow->addWidget(browse);
+    m_sources = new SourceListEditor;
     m_exclude = new QLineEdit(QStringLiteral("**/*.tmp, Logs/**"));
     m_sentinel = new QLineEdit;
     m_sentinel->setPlaceholderText(QStringLiteral("opcional, ex.: Config/pdv.ini"));
-    ff->addRow(QStringLiteral("Pasta"), srcRow);
+    ff->addRow(QStringLiteral("Pastas"), m_sources);
     ff->addRow(QStringLiteral("Ignorar"), m_exclude);
     ff->addRow(QStringLiteral("Arquivo-sentinela"), m_sentinel);
     ff->addRow(QString(), label(QStringLiteral("O sentinela é um arquivo que sempre existe na origem: se sumir, o Synkro entende "
@@ -1013,22 +1007,8 @@ JobWizard::JobWizard(QWidget* parent) : QWizard(parent)
     if (AppContext::instance().config().global.vaults.empty())
         wv->addWidget(label(QStringLiteral("Nenhum cofre cadastrado: adicione um disco em Cofres antes de criar a tarefa."), "fact"));
     wv->addWidget(label(QStringLiteral("Dias e horário"), "fact"));
-    auto* daysRow = new QHBoxLayout;
-    static const char* names[] = {"Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"};
-    for (int i = 0; i < 7; ++i) {
-        m_days[i] = new QCheckBox(QString::fromUtf8(names[i]));
-        m_days[i]->setChecked(i < 6);
-        daysRow->addWidget(m_days[i]);
-    }
-    daysRow->addStretch(1);
-    wv->addLayout(daysRow);
-    m_time = new QTimeEdit(QTime(22, 0));
-    m_time->setDisplayFormat(QStringLiteral("HH:mm"));
-    auto* timeRow = new QHBoxLayout;
-    timeRow->addWidget(label(QStringLiteral("às")));
-    timeRow->addWidget(m_time);
-    timeRow->addStretch(1);
-    wv->addLayout(timeRow);
+    m_week = new WeekScheduleEditor;
+    wv->addWidget(m_week);
     m_onStartup = new QCheckBox(QStringLiteral("Também ao ligar o computador (10 minutos depois)"));
     m_shutdown = new QCheckBox(QStringLiteral("Desligar o computador ao final, somente se tudo der certo"));
     wv->addWidget(m_onStartup);
@@ -1070,20 +1050,7 @@ synkro::config::JobConfig JobWizard::buildJob() const
         if (m_vaults->item(i)->checkState() == Qt::Checked)
             j.vaults.push_back(m_vaults->item(i)->data(Qt::UserRole).toString().toStdString());
 
-    synkro::config::ScheduleTrigger t;
-    std::vector<int> days;
-    for (int i = 0; i < 7; ++i)
-        if (m_days[i]->isChecked())
-            days.push_back(i + 1);
-    t.atMinutes = m_time->time().hour() * 60 + m_time->time().minute();
-    if (days.size() == 7) {
-        t.kind = synkro::config::TriggerKind::Daily;
-    } else {
-        t.kind = synkro::config::TriggerKind::Weekly;
-        t.days = days;
-    }
-    if (!days.empty())
-        j.schedule.push_back(t);
+    j.schedule = m_week->triggers();
     if (m_onStartup->isChecked()) {
         synkro::config::ScheduleTrigger boot;
         boot.kind = synkro::config::TriggerKind::OnStartup;
@@ -1093,7 +1060,8 @@ synkro::config::JobConfig JobWizard::buildJob() const
     j.shutdownAfter = m_shutdown->isChecked();
 
     if (j.type == "files") {
-        j.files.source = QDir::toNativeSeparators(m_source->text().trimmed()).toStdWString();
+        j.files.source = m_sources->mainSource();
+        j.files.moreSources = m_sources->moreSources();
         for (const auto& p : m_exclude->text().split(',', Qt::SkipEmptyParts))
             j.files.exclude.push_back(p.trimmed().toStdWString());
         j.files.sentinelFile = m_sentinel->text().trimmed().toStdWString();

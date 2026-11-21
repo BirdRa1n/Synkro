@@ -78,6 +78,8 @@ void DashboardPage::refresh()
         names->addWidget(label(fmt::q(job.name), "h2"));
         QString sub = job.type == "database" ? QStringLiteral("Banco · ") + fmt::q(job.database.engine)
                                              : QStringLiteral("Arquivos · ") + fmt::q(job.files.source);
+        if (job.type == "files" && !job.files.moreSources.empty())
+            sub += QStringLiteral(" + %1 pasta(s)").arg(job.files.moreSources.size());
         names->addWidget(label(sub, "muted"));
         head->addLayout(names, 1);
 

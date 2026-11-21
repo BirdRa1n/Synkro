@@ -3,6 +3,7 @@
 #include "AppContext.h"
 #include "Dialogs.h"
 #include "FlowEditor.h"
+#include "JobWidgets.h"
 #include "Format.h"
 #include "Icons.h"
 #include "Pages.h"
@@ -14,6 +15,8 @@
 
 #include <QApplication>
 #include <QButtonGroup>
+#include <QCheckBox>
+#include <QTimeEdit>
 #include <QCloseEvent>
 #include <QDir>
 #include <QElapsedTimer>
@@ -302,7 +305,20 @@ void MainWindow::saveScreenshots(const QString& dir)
         shoot(&wizard, QStringLiteral("7-assistente-inicio.png"));
         wizard.show();
         wizard.next();
+        if (auto* list = wizard.findChild<SourceListEditor*>())
+            list->setSources(L"C:\\PDV", {{L"D:\\Fiscal\\XML", {}, L"XML"}, {L"E:\\Exportacao", L"exportacao-erp", L"exportacao-erp"}});
         shoot(&wizard, QStringLiteral("7-assistente-origem.png"));
+        wizard.show(); // ao reabrir, o assistente volta ao início
+        wizard.next();
+        wizard.next();
+        for (auto* cb : wizard.findChildren<QCheckBox*>())
+            if (cb->text().startsWith(QStringLiteral("Mesmo horário")))
+                cb->setChecked(false);
+            else if (cb->text() == QLatin1String("Dom"))
+                cb->setChecked(true);
+        if (const auto times = wizard.findChildren<QTimeEdit*>(); !times.isEmpty())
+            times.constLast()->setTime(QTime(12, 0)); // domingo ao meio-dia
+        shoot(&wizard, QStringLiteral("7-assistente-quando.png"));
     }
     if (!AppContext::instance().config().jobs.empty()) {
         YamlEditorDialog editor(AppContext::instance().config().jobs.front().file, this);
@@ -331,6 +347,16 @@ void MainWindow::saveScreenshots(const QString& dir)
         FlowEditorDialog flow(job, this);
         flow.selectFirst(synkro::config::flow::NodeKind::Command);
         shoot(&flow, QStringLiteral("15-modo-facil-comandos.png"));
+        for (const auto& j : AppContext::instance().config().jobs)
+            if (job.type != "files" && j.type == "files")
+                job = j;
+        if (job.type == "files") {
+            job.files.moreSources.push_back({L"D:\\Fiscal\\XML", {}, L"XML"});
+            job.files.moreSources.push_back({L"E:\\Exportacao", L"exportacao-erp", L"exportacao-erp"});
+            FlowEditorDialog many(job, this);
+            many.selectFirst(synkro::config::flow::NodeKind::Source);
+            shoot(&many, QStringLiteral("15-modo-facil-pastas.png"));
+        }
     }
     {
         AddVaultDialog add(this);

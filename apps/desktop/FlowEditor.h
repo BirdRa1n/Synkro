@@ -43,6 +43,7 @@ private:
     void loadSource();
     void loadVault(const synkro::config::flow::Node& n);
     void storeTrigger();
+    void splitTriggerDay();
     void storeCommand();
     void storeSource();
     void addBlock(const QString& type, QPointF scenePos);
@@ -66,13 +67,15 @@ private:
     QWidget* m_trDaysBox;
     QCheckBox* m_trDays[7];
     QSpinBox *m_trDayOfMonth, *m_trInterval, *m_trDelay;
+    QPushButton* m_trSplit;
     // comando
     QLineEdit* m_cmdLine;
     QSpinBox* m_cmdTimeout;
     QComboBox* m_cmdOnError;
     QLabel* m_cmdRole;
     // origem
-    QLineEdit *m_srcName, *m_srcPath, *m_srcExclude;
+    QLineEdit *m_srcName, *m_srcExclude;
+    class SourceListEditor* m_srcList;
     QWidget* m_srcFilesBox;
     QLabel* m_srcDbInfo;
     QCheckBox* m_srcShutdown;

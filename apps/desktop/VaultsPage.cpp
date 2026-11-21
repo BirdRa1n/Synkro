@@ -61,6 +61,8 @@ void VaultsPage::refresh()
         QString title, sub;
         if (j.type == "files") {
             title = fmt::q(j.files.source);
+            if (!j.files.moreSources.empty())
+                title += QStringLiteral("  + %1 pasta(s)").arg(j.files.moreSources.size());
             sub = fmt::q(j.name);
         } else {
             title = fmt::q(j.database.engine) + (j.database.host.empty() ? QString() : QStringLiteral(" · ") + fmt::q(j.database.host));

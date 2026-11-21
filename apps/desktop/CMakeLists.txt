@@ -5,6 +5,7 @@ qt_add_executable(synkro-desktop
     AppContext.h AppContext.cpp
     Dialogs.h Dialogs.cpp
     FlowEditor.h FlowEditor.cpp
+    JobWidgets.h JobWidgets.cpp
     Format.h
     Icons.h Icons.cpp
     MainWindow.h MainWindow.cpp

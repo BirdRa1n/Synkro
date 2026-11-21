@@ -4,6 +4,7 @@
 #include "Dialogs.h"
 #include "Format.h"
 #include "Icons.h"
+#include "JobWidgets.h"
 #include "Theme.h"
 #include "Ui.h"
 
@@ -15,6 +16,7 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDialogButtonBox>
 #include <QDir>
 #include <QDrag>
 #include <QDragEnterEvent>
@@ -226,8 +228,10 @@ public:
         }
         case NodeKind::Source: {
             const QString title = fmt::q(m_job.name);
-            const QString sub = m_job.type == "files" ? QString::fromStdWString(m_job.files.source)
-                                                       : QStringLiteral("banco · ") + fmt::q(m_job.database.engine);
+            QString sub = m_job.type == "files" ? QString::fromStdWString(m_job.files.source)
+                                                 : QStringLiteral("banco · ") + fmt::q(m_job.database.engine);
+            if (m_job.type == "files" && !m_job.files.moreSources.empty())
+                sub += QStringLiteral(" + %1 pasta(s)").arg(m_job.files.moreSources.size());
             return {title, sub, m_job.type == "files" ? QStringLiteral("folder") : QStringLiteral("database"), t.accent};
         }
         case NodeKind::Vault: {
@@ -884,6 +888,11 @@ void FlowEditorDialog::buildInspector()
         m_trForm->addRow(QStringLiteral("Intervalo"), m_trInterval);
         m_trForm->addRow(QStringLiteral("Atraso"), m_trDelay);
         v->addLayout(m_trForm);
+        m_trSplit = ui::button(QStringLiteral("Horário diferente em um dia…"), QStringLiteral("clock"));
+        m_trSplit->setToolTip(QStringLiteral("Tira um dia deste gatilho e cria outro só para ele, com o horário escolhido "
+                                             "(ex.: domingo ao meio-dia)."));
+        connect(m_trSplit, &QPushButton::clicked, this, [this] { splitTriggerDay(); });
+        v->addWidget(m_trSplit, 0, Qt::AlignLeft);
         v->addStretch(1);
         connect(m_trKind, &QComboBox::currentIndexChanged, this, [this] { storeTrigger(); });
         connect(m_trTime, &QTimeEdit::timeChanged, this, [this] { storeTrigger(); });
@@ -924,22 +933,16 @@ void FlowEditorDialog::buildInspector()
         f->addRow(QStringLiteral("Nome da tarefa"), m_srcName);
         v->addLayout(f);
         m_srcFilesBox = new QWidget;
-        auto* ff = new QFormLayout(m_srcFilesBox);
+        auto* ff = new QVBoxLayout(m_srcFilesBox);
         ff->setContentsMargins(0, 0, 0, 0);
-        m_srcPath = new QLineEdit;
-        auto* browse = ui::button(QStringLiteral("…"));
-        connect(browse, &QPushButton::clicked, this, [this] {
-            const QString d = QFileDialog::getExistingDirectory(this, QStringLiteral("Pasta de origem"), m_srcPath->text());
-            if (!d.isEmpty())
-                m_srcPath->setText(QDir::toNativeSeparators(d));
-        });
-        auto* pathRow = new QHBoxLayout;
-        pathRow->addWidget(m_srcPath, 1);
-        pathRow->addWidget(browse);
-        ff->addRow(QStringLiteral("Pasta"), pathRow);
+        ff->addWidget(ui::label(QStringLiteral("Pastas"), "fact"));
+        m_srcList = new SourceListEditor;
+        connect(m_srcList, &SourceListEditor::changed, this, [this] { storeSource(); });
+        ff->addWidget(m_srcList);
+        ff->addWidget(ui::label(QStringLiteral("Excluir"), "fact"));
         m_srcExclude = new QLineEdit;
         m_srcExclude->setPlaceholderText(QStringLiteral("**/*.tmp, Logs/**"));
-        ff->addRow(QStringLiteral("Excluir"), m_srcExclude);
+        ff->addWidget(m_srcExclude);
         v->addWidget(m_srcFilesBox);
         m_srcDbInfo = ui::label(QString(), "muted");
         m_srcDbInfo->setWordWrap(true);
@@ -952,7 +955,7 @@ void FlowEditorDialog::buildInspector()
         more->setWordWrap(true);
         v->addWidget(more);
         v->addStretch(1);
-        for (auto* e : {m_srcName, m_srcPath, m_srcExclude})
+        for (auto* e : {m_srcName, m_srcExclude})
             connect(e, &QLineEdit::textChanged, this, [this] { storeSource(); });
         connect(m_srcShutdown, &QCheckBox::toggled, this, [this] { storeSource(); });
     }
@@ -1006,6 +1009,69 @@ void FlowEditorDialog::loadTrigger(const flow::Node& n)
     m_trForm->setRowVisible(m_trDayOfMonth, k == TriggerKind::Monthly);
     m_trForm->setRowVisible(m_trInterval, k == TriggerKind::Every);
     m_trForm->setRowVisible(m_trDelay, k == TriggerKind::OnStartup || k == TriggerKind::OnLogon);
+    m_trSplit->setVisible(k == TriggerKind::Daily || (k == TriggerKind::Weekly && t.days.size() > 1));
+}
+
+void FlowEditorDialog::splitTriggerDay()
+{
+    auto* n = m_graph.find(m_current);
+    if (!n || n->kind != NodeKind::Trigger)
+        return;
+    const ScheduleTrigger original = n->trigger;
+    std::vector<int> days = original.kind == TriggerKind::Daily ? std::vector<int>{1, 2, 3, 4, 5, 6, 7} : original.days;
+    if (days.size() < 2)
+        return;
+
+    QDialog dlg(this);
+    dlg.setWindowTitle(QStringLiteral("Horário diferente em um dia"));
+    auto* f = new QFormLayout(&dlg);
+    f->setContentsMargins(20, 18, 20, 18);
+    auto* day = new QComboBox;
+    static const char* longNames[] = {"Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"};
+    for (int d : days)
+        day->addItem(QString::fromUtf8(longNames[d - 1]), d);
+    day->setCurrentIndex(day->count() - 1); // domingo, o caso mais comum
+    auto* time = new QTimeEdit(QTime(12, 0));
+    time->setDisplayFormat(QStringLiteral("HH:mm"));
+    f->addRow(QStringLiteral("Dia"), day);
+    f->addRow(QStringLiteral("Horário"), time);
+    auto* hint = ui::label(QStringLiteral("O dia sai deste gatilho e ganha um gatilho próprio, ligado ao mesmo destino."), "muted");
+    hint->setWordWrap(true);
+    f->addRow(hint);
+    auto* box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    box->button(QDialogButtonBox::Ok)->setText(QStringLiteral("Criar"));
+    box->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("Cancelar"));
+    connect(box, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    f->addRow(box);
+    if (dlg.exec() != QDialog::Accepted)
+        return;
+
+    const int chosen = day->currentData().toInt();
+    days.erase(std::remove(days.begin(), days.end(), chosen), days.end());
+    n->trigger.kind = TriggerKind::Weekly;
+    n->trigger.days = days;
+
+    flow::Node extra;
+    extra.id = m_graph.nextId();
+    extra.kind = NodeKind::Trigger;
+    extra.trigger.kind = TriggerKind::Weekly;
+    extra.trigger.days = {chosen};
+    extra.trigger.atMinutes = time->time().hour() * 60 + time->time().minute();
+    extra.x = n->x;
+    extra.y = n->y + kNodeH + 24;
+    const int originalId = n->id; // `n` deixa de valer depois do push_back
+    m_graph.nodes.push_back(extra);
+    std::vector<flow::Edge> copies;
+    for (const auto& e : m_graph.edges)
+        if (e.from == originalId)
+            copies.push_back({extra.id, e.port, e.to});
+    for (const auto& e : copies)
+        m_graph.edges.push_back(e);
+
+    m_scene->rebuild();
+    m_scene->select(extra.id);
+    changed();
 }
 
 void FlowEditorDialog::storeTrigger()
@@ -1093,7 +1159,7 @@ void FlowEditorDialog::loadSource()
     m_srcFilesBox->setVisible(files);
     m_srcDbInfo->setVisible(!files);
     if (files) {
-        m_srcPath->setText(QString::fromStdWString(m_base.files.source));
+        m_srcList->setSources(m_base.files.source, m_base.files.moreSources);
         QStringList ex;
         for (const auto& e : m_base.files.exclude)
             ex << QString::fromStdWString(e);
@@ -1115,7 +1181,8 @@ void FlowEditorDialog::storeSource()
         return;
     m_base.name = m_srcName->text().trimmed().toStdString();
     if (m_base.type == "files") {
-        m_base.files.source = QDir::toNativeSeparators(m_srcPath->text().trimmed()).toStdWString();
+        m_base.files.source = m_srcList->mainSource();
+        m_base.files.moreSources = m_srcList->moreSources();
         m_base.files.exclude.clear();
         for (const auto& p : m_srcExclude->text().split(',', Qt::SkipEmptyParts))
             if (!p.trimmed().isEmpty())
