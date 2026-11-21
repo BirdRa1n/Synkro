@@ -217,13 +217,18 @@ Só um cofre novo, sem backups, pode ser cifrado. A **chave de recuperação** a
 | PDV reinstalado ou trocado, mesmos cofres | `synkro-worker vault unlock <disco>` como administrador (pede a chave de recuperação) |
 | Restaurar num computador novo | Desktop: Restaurar, escolha o cofre e digite a chave quando pedida. Linha de comando: `restore` / `restore-db` também pedem. |
 | Backup falha com "é cifrado e a chave não está disponível nesta máquina" | `vault unlock` no disco indicado |
-| "este cofre era cifrado, mas o key.json sumiu" | Alguém apagou `SynkroVault\key.json`. O Synkro não grava em claro. Restaure o arquivo de outra cópia ou prepare um cofre novo. |
+| "este cofre era cifrado, mas o key.json sumiu" | Alguém apagou as duas cópias (`SynkroVault\key.json` e `key.backup.json`); se só uma some, o Synkro a refaz sozinho. O Synkro não grava em claro. Restaure os arquivos de outra cópia ou prepare um cofre novo. |
 | Chave de recuperação perdida, PDV funcionando | Os backups continuam funcionando. Prepare um cofre **novo** cifrado (com chave nova, anotada desta vez) e aposente o antigo quando o novo tiver o histórico necessário. |
 | Chave de recuperação perdida **e** PDV perdido | Os dados desse cofre não podem ser recuperados por ninguém |
 
 O que a cifragem protege:
 - **Protegido:** o conteúdo dos arquivos e dos dumps, se o disco ou o NAS cair em mãos erradas.
-- **Não protegido:** nomes de pastas e arquivos, tamanhos e datas continuam visíveis, e quem levar o PDV junto com o disco consegue ler.
+- **Não protegido:**
+  - nomes de pastas e arquivos, tamanhos e datas continuam visíveis;
+  - o `job.yml` e os `.dump.json` do cofre (nomes de servidores, bancos e tabelas) também;
+  - quem levar o PDV junto com o disco consegue ler.
+
+O botão **Copiar** da chave de recuperação marca o conteúdo para ficar fora do histórico da área de transferência (Win+V) e da sincronização com a nuvem.
 
 Detalhes em [architecture.md §3.5](architecture.md#35-cofre-cifrado-fase-5).
 

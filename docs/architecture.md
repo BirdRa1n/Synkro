@@ -188,7 +188,7 @@ O disco de rodízio sai da loja e o NAS é acessível a outras pessoas. Os XMLs 
 
 **Chaves.**
 - **Chave do cofre:** cada cofre cifrado tem uma chave aleatória de 256 bits.
-- **No cofre:** `SynkroVault\key.json` guarda essa chave **cifrada** com a **chave de recuperação**. A chave de recuperação tem 160 bits aleatórios, é mostrada uma única vez (`XXXX-XXXX-...`, 8 grupos, alfabeto base32) e passa por PBKDF2-SHA256 com 200 mil iterações e salt próprio. A cifragem da chave usa AES-GCM, autenticado com o `vault_id` do cofre.
+- **No cofre:** `SynkroVault\key.json` guarda essa chave **cifrada** com a **chave de recuperação**. O arquivo fica em duas cópias (`key.json` e `key.backup.json`): perder ou danificar uma não tranca o cofre, e a cópia ruim é regravada a partir da boa. A chave de recuperação tem 160 bits aleatórios, é mostrada uma única vez (`XXXX-XXXX-...`, 8 grupos, alfabeto base32) e passa por PBKDF2-SHA256 com 200 mil iterações e salt próprio. A cifragem da chave usa AES-GCM, autenticado com o `vault_id` do cofre.
 - **Nesta máquina:** uma cópia da chave fica no cofre de segredos (DPAPI, nome `vault-key.<vault_id>`). Assim o worker agendado cifra sem ninguém digitar nada.
 - **Computador novo:** basta digitar a chave de recuperação na restauração (CLI ou desktop). Ela fica só na memória do processo, ou é guardada com `vault unlock`.
 
@@ -209,7 +209,12 @@ O disco de rodízio sai da loja e o NAS é acessível a outras pessoas. Os XMLs 
 - **Só cofres novos:** um cofre só pode ser cifrado enquanto não tem backups. Assim nunca existe cofre "metade cifrado"; para cifrar dados existentes, prepara-se um cofre novo.
 
 **Limites (conscientes).**
-- **Metadados visíveis:** nomes de pastas e arquivos, tamanhos, datas e os hashes do catálogo ficam visíveis. Só o conteúdo é cifrado. Os hashes permitem a quem já tem um arquivo confirmar que ele está no cofre, mas não revelam o conteúdo.
+- **Metadados visíveis:** só o conteúdo dos arquivos e dos dumps é cifrado. Ficam em claro:
+  - nomes de pastas e arquivos, tamanhos e datas;
+  - os hashes do catálogo, que permitem a quem já tem um arquivo confirmar que ele está no cofre, mas não revelam o conteúdo;
+  - o `job.yml` copiado para o cofre (servidores, usuários, caminhos e **nomes** de segredos, nunca os valores);
+  - os `.dump.json` (nomes de bancos e de tabelas, dica de restauração).
+- **Integridade contra quem pode gravar no cofre:** cada arquivo é autenticado, então adulterar o conteúdo é detectado. O vínculo entre arquivo e caminho, porém, não é autenticado, e o catálogo também não. Quem tem acesso de gravação ao cofre pode trocar arquivos cifrados inteiros entre si ou voltar versões, se ajustar o catálogo junto. O objetivo da cifragem é o **sigilo**; contra quem pode gravar no cofre, a defesa é o cofre de rodízio desconectado (§3.4) e a redundância entre cofres.
 - **PDV roubado:** quem levar o PDV **e** o disco consegue ler, porque a chave está guardada no PDV (DPAPI). A proteção é contra a perda ou o roubo do **cofre**.
 - **Perda dupla:** sem a chave de recuperação e sem a máquina que guarda a chave, os dados não podem ser recuperados por ninguém. É por isso que o desktop só conclui depois da confirmação de que a chave foi anotada.
 
