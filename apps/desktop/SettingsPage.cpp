@@ -14,9 +14,13 @@
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDesktopServices>
 #include <QDir>
 #include <QFileDialog>
+#include <QFileInfo>
+#include <QStandardPaths>
+#include <QSysInfo>
 #include <QHBoxLayout>
 #include <QInputDialog>
 #include <QMessageBox>
@@ -220,10 +224,41 @@ void SettingsPage::refresh()
         ImportConfigDialog dlg(this);
         dlg.exec();
     });
+    // Relatório para o suporte (piloto): roda o worker como administrador para
+    // conferir também segredos e Agendador.
+    auto* diagBtn = button(QStringLiteral("Gerar diagnóstico…"), QStringLiteral("alert"));
+    diagBtn->setToolTip(QStringLiteral("Relatório para o suporte: checagem da instalação, execuções, alertas e configuração "
+                                       "(sem senhas)"));
+    connect(diagBtn, &QPushButton::clicked, this, [this] {
+        const QString file = QFileDialog::getSaveFileName(
+            this, QStringLiteral("Salvar diagnóstico"),
+            QDir(QStandardPaths::writableLocation(QStandardPaths::DesktopLocation))
+                .filePath(QStringLiteral("synkro-diagnostico-%1-%2.txt")
+                              .arg(QSysInfo::machineHostName(),
+                                   QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-HHmm")))),
+            QStringLiteral("Texto (*.txt)"));
+        if (file.isEmpty())
+            return;
+        auto r = AppContext::instance().runWorkerElevated({QStringLiteral("diag"), QStringLiteral("--to"),
+                                                           QDir::toNativeSeparators(file), QStringLiteral("--config-dir"),
+                                                           fmt::q(AppContext::instance().configDir())});
+        if (!r || !QFileInfo::exists(file)) {
+            QMessageBox::warning(this, QStringLiteral("Diagnóstico"),
+                                 r ? QStringLiteral("O relatório não foi gerado (código %1).").arg(r.value())
+                                   : fmt::q(r.error().message));
+            return;
+        }
+        QMessageBox::information(this, QStringLiteral("Diagnóstico"),
+                                 QStringLiteral("Relatório salvo em:\n%1\n\nEle não contém senhas, mas tem nomes de servidores, "
+                                                "pastas e e-mails da configuração. Envie só ao suporte.")
+                                     .arg(QDir::toNativeSeparators(file)));
+        QDesktopServices::openUrl(QUrl::fromLocalFile(file));
+    });
     crow->addWidget(editGlobal);
     crow->addWidget(openDir);
     crow->addWidget(exportBtn);
     crow->addWidget(importBtn);
+    crow->addWidget(diagBtn);
     crow->addStretch(1);
     crow->addWidget(apply);
     cv->addLayout(crow);
