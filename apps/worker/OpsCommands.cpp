@@ -417,6 +417,37 @@ std::vector<synkro::support::DoctorCheck> doctorFor(const synkro::config::Config
 
 } // namespace
 
+int cmdAutostart(const QStringList& args)
+{
+    // autostart on|off|status: tarefa \Synkro\Desktop (bandeja ao fazer logon, como administrador).
+    const QString sub = args.isEmpty() ? QStringLiteral("status") : args.first();
+    if (sub == QLatin1String("status")) {
+        out() << (synkro::win::taskExists(synkro::win::kDesktopTaskName) ? "ligado" : "desligado") << Qt::endl;
+        return ExitOk;
+    }
+    if (sub == QLatin1String("off")) {
+        if (!synkro::win::taskExists(synkro::win::kDesktopTaskName)) {
+            out() << "início automático já estava desligado" << Qt::endl;
+            return ExitOk;
+        }
+        if (auto st = synkro::win::deleteTask(synkro::win::kDesktopTaskName); !st)
+            return fail(st.error());
+        out() << "início automático desligado" << Qt::endl;
+        return ExitOk;
+    }
+    if (sub != QLatin1String("on"))
+        return (usage(), ExitUsage);
+    const QString desktop = QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("synkro-desktop.exe"));
+    if (!QFileInfo::exists(desktop)) {
+        err() << "synkro-desktop.exe não encontrado ao lado do worker: " << QDir::toNativeSeparators(desktop) << Qt::endl;
+        return ExitFailure;
+    }
+    if (auto st = synkro::win::registerTask(synkro::win::desktopAutostartTask(QDir::toNativeSeparators(desktop).toStdWString())); !st)
+        return fail(st.error());
+    out() << "início automático ligado: o Synkro abre na bandeja, como administrador, ao entrar no Windows" << Qt::endl;
+    return ExitOk;
+}
+
 int cmdDoctor(const QStringList& args)
 {
     QCommandLineParser p;

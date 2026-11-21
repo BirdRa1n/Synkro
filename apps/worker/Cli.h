@@ -75,6 +75,7 @@ int cmdSchedule(const QStringList& args);
 int cmdShutdown(const QStringList& args);
 int cmdNotify(const QStringList& args); // send | test | list
 int cmdDoctor(const QStringList& args); // checagem pré-piloto
+int cmdAutostart(const QStringList& args); // on | off | status
 int cmdDiag(const QStringList& args);   // relatório para o suporte
 int cmdConfigApply(const QStringList& args);
 int cmdConfigPackage(const QString& sub, const QStringList& args); // export | import

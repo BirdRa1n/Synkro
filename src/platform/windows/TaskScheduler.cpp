@@ -185,7 +185,10 @@ std::wstring buildTaskXml(const TaskDefinition& def)
                      L"  <RegistrationInfo><Author>Synkro</Author><Description>"
                      + xmlEscape(def.description) + L"</Description></RegistrationInfo>\n"
                      L"  <Triggers>" + triggers + L"</Triggers>\n";
-    if (def.runAsSystem)
+    if (!def.groupSid.empty())
+        x += L"  <Principals><Principal id=\"Author\"><GroupId>" + xmlEscape(def.groupSid)
+             + L"</GroupId><RunLevel>HighestAvailable</RunLevel></Principal></Principals>\n";
+    else if (def.runAsSystem)
         x += L"  <Principals><Principal id=\"Author\"><UserId>S-1-5-18</UserId><RunLevel>HighestAvailable</RunLevel>"
              L"</Principal></Principals>\n";
     x += L"  <Settings>"
@@ -200,7 +203,7 @@ std::wstring buildTaskXml(const TaskDefinition& def)
            L"<AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled><Hidden>false</Hidden>"
            L"<ExecutionTimeLimit>"
          + isoDuration(def.executionTimeLimitSeconds)
-         + L"</ExecutionTimeLimit><Priority>7</Priority></Settings>\n"
+         + L"</ExecutionTimeLimit><Priority>" + std::to_wstring(def.priority) + L"</Priority></Settings>\n"
            L"  <Actions Context=\"Author\"><Exec><Command>"
          + xmlEscape(def.executable) + L"</Command><Arguments>" + xmlEscape(def.arguments)
          + L"</Arguments></Exec></Actions>\n</Task>\n";
@@ -223,20 +226,52 @@ Status registerTask(const TaskDefinition& def)
     ::VariantInit(&user);
     ::VariantInit(&password);
     ::VariantInit(&sddl);
-    if (def.runAsSystem) {
+    TASK_LOGON_TYPE logon = TASK_LOGON_INTERACTIVE_TOKEN;
+    if (!def.groupSid.empty()) {
+        logon = TASK_LOGON_GROUP; // o grupo vem do <GroupId> do XML
+    } else if (def.runAsSystem) {
         user.vt = VT_BSTR;
         user.bstrVal = ::SysAllocString(L"SYSTEM");
+        logon = TASK_LOGON_SERVICE_ACCOUNT;
     }
     ComPtr<IRegisteredTask> task;
-    const HRESULT h = folder->RegisterTask(name, body, TASK_CREATE_OR_UPDATE, user, password,
-                                           def.runAsSystem ? TASK_LOGON_SERVICE_ACCOUNT : TASK_LOGON_INTERACTIVE_TOKEN,
-                                           sddl, &task);
+    const HRESULT h = folder->RegisterTask(name, body, TASK_CREATE_OR_UPDATE, user, password, logon, sddl, &task);
     ::VariantClear(&user);
     ::SysFreeString(name);
     ::SysFreeString(body);
     if (FAILED(h))
         return hr(h, "registrar a tarefa");
     return Status::success();
+}
+
+TaskDefinition desktopAutostartTask(const std::wstring& desktopExe)
+{
+    TaskDefinition t;
+    t.name = kDesktopTaskName;
+    t.description = L"Abre o Synkro Desktop na bandeja, como administrador, ao entrar no Windows.";
+    t.executable = desktopExe;
+    t.arguments = L"--tray";
+    config::ScheduleTrigger logon;
+    logon.kind = config::TriggerKind::OnLogon;
+    logon.delaySeconds = 10;
+    t.triggers = {logon};
+    t.runAsSystem = false;
+    t.groupSid = L"S-1-5-32-545"; // Usuários (inclui os administradores)
+    t.startWhenAvailable = false;
+    t.executionTimeLimitSeconds = 0;
+    t.priority = 4;
+    return t;
+}
+
+bool taskExists(const std::wstring& name)
+{
+    auto tasks = listTasks();
+    if (!tasks)
+        return false;
+    for (const auto& t : tasks.value())
+        if (foldCase(t) == foldCase(name))
+            return true;
+    return false;
 }
 
 Status deleteTask(const std::wstring& name)
