@@ -2,6 +2,7 @@
 
 #include "core/Paths.h"
 #include "core/RunId.h"
+#include "crypto/VaultKey.h"
 #include "database/DatabaseBackup.h"
 #include "database/SqlClient.h"
 #include "database/Sqlite.h"
@@ -83,7 +84,13 @@ Result<DatabaseRestoreResult> restoreDatabase(const DatabaseRestoreRequest& req)
     // Copia para o preparo conferindo o SHA-256 contra os metadados.
     const std::wstring ext = chosen->relativePath.substr(chosen->relativePath.find(L'.', chosen->relativePath.find_last_of(L'/')));
     const std::wstring local = win::joinPath(work.value().path(), L"dump" + ext);
-    auto copied = copyFileVerified(dumpFile, local);
+    // Cofre cifrado: o dump é decifrado ao entrar na pasta privada de preparo.
+    auto cipher = crypto::cipherFor(req.vaultLocation, req.secretsFile);
+    if (!cipher)
+        return cipher.error();
+    CopyOptions copyOptions;
+    copyOptions.decrypt = cipher.value().get();
+    auto copied = copyFileVerified(dumpFile, local, copyOptions);
     if (!copied)
         return copied.error();
     if (copied.value().sha256 != chosen->sha256)

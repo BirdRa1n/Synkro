@@ -2,6 +2,7 @@
 
 #include "core/Paths.h"
 #include "core/RunId.h"
+#include "crypto/VaultKey.h"
 #include "database/Drivers.h"
 #include "database/DumpStore.h"
 #include "database/SqlClient.h"
@@ -344,7 +345,13 @@ BackupResult runDatabaseBackup(const DatabaseBackupRequest& req)
             fail("o disco em " + win::toUtf8(target.location) + " não é o cofre esperado");
             continue;
         }
-        say("gravando no cofre " + win::toUtf8(target.location) + "...");
+        // Cofre cifrado: sem a chave, nada é gravado (nem em claro).
+        auto cipher = crypto::cipherFor(target.location, req.secretsFile);
+        if (!cipher) {
+            fail(cipher.error().message);
+            continue;
+        }
+        say("gravando no cofre " + win::toUtf8(target.location) + (cipher.value() ? " (cifrado)" : "") + "...");
 
         const vault::JobLayout layout(target.location, req.jobId);
         bool dirsOk = true;
@@ -385,6 +392,7 @@ BackupResult runDatabaseBackup(const DatabaseBackupRequest& req)
             opt.verify = VerifyMode::RereadUncached;
             opt.tempDirectory = layout.tmp();
             opt.preserveTimestamps = false;
+            opt.encrypt = cipher.value().get();
             auto copied = copyFileVerified(a.stagedFile, dest, opt);
             if (!copied || copied.value().sha256 != a.sha256) {
                 ++vr.failed;

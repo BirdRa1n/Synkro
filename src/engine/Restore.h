@@ -32,6 +32,7 @@ struct RestoreRequest {
     std::wstring targetDirectory;
     std::wstring pathPrefix;     // restringe a uma pasta/arquivo (caminho do catálogo)
     bool allowNonEmptyTarget = false;
+    std::wstring secretsFile;    // chave de cofre cifrado (vazio = padrão)
 };
 
 struct RestoreResult {

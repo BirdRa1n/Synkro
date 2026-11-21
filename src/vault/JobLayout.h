@@ -21,11 +21,13 @@ public:
     JobLayout() = default;
     JobLayout(const std::wstring& vaultLocation, const std::wstring& jobId)
         : m_jobId(jobId)
+        , m_location(vaultLocation)
         , m_root(win::joinPath(win::joinPath(vaultRoot(vaultLocation), L"jobs"), jobId))
     {
     }
 
     const std::wstring& jobId() const { return m_jobId; }
+    const std::wstring& vaultLocation() const { return m_location; }
     const std::wstring& root() const { return m_root; }
 
     std::wstring current() const { return win::joinPath(m_root, L"current"); }
@@ -54,6 +56,7 @@ public:
 
 private:
     std::wstring m_jobId;
+    std::wstring m_location;
     std::wstring m_root;
 };
 

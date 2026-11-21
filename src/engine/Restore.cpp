@@ -2,6 +2,7 @@
 
 #include "catalog/Manifest.h"
 #include "core/RunId.h"
+#include "crypto/VaultKey.h"
 #include "engine/VaultOps.h"
 #include "platform/windows/Win32.h"
 #include "transfer/SafeCopy.h"
@@ -123,6 +124,14 @@ Result<RestoreResult> restore(const RestoreRequest& req)
         return Error::make(ErrorCode::AlreadyExists,
                            "a pasta de destino não está vazia; a restauração nunca sobrescreve dados por padrão");
 
+    // Cofre cifrado: KeyRequired se a chave não estiver disponível (a
+    // interface pede a chave de recuperação e tenta de novo).
+    auto cipher = crypto::cipherFor(req.vaultLocation, req.secretsFile);
+    if (!cipher)
+        return cipher.error();
+    CopyOptions copyOptions;
+    copyOptions.decrypt = cipher.value().get();
+
     RestoreResult result;
     auto state = stateAtRun(layout, req.runId, &result.runId);
     if (!state)
@@ -143,7 +152,7 @@ Result<RestoreResult> restore(const RestoreRequest& req)
         }
 
         const std::wstring dest = win::joinPath(req.targetDirectory, win::fromCatalogPath(path));
-        auto copied = copyFileVerified(source, dest);
+        auto copied = copyFileVerified(source, dest, copyOptions);
         if (!copied) {
             result.failures.emplace_back(path, copied.error().message);
             continue;

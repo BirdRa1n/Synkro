@@ -63,6 +63,9 @@ struct BackupRequest {
     std::vector<std::wstring> dependsOn;
     std::int64_t dependencyWaitSeconds = 4 * 3600;
 
+    // Onde está a chave dos cofres cifrados (vazio = <dados>\secrets.dat).
+    std::wstring secretsFile;
+
     std::function<void(const ProgressEvent&)> progress;
 };
 

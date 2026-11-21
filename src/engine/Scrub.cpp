@@ -2,6 +2,7 @@
 
 #include "catalog/Catalog.h"
 #include "config/VaultAccess.h"
+#include "crypto/VaultKey.h"
 #include "database/DumpStore.h"
 #include "engine/VaultOps.h"
 #include "engine/Verify.h"
@@ -19,17 +20,23 @@ namespace {
 struct Located {
     std::string label;
     vault::JobLayout layout;
+    std::shared_ptr<const crypto::FileCipher> cipher; // cofre cifrado; nulo = em claro
 };
 
-// Copia `from` sobre `to` e confere que o resultado tem o hash esperado.
-bool repairFile(const std::wstring& from, const std::wstring& to, const Sha256Digest& expected, const std::wstring& tmpDir)
+// Copia `from` (cofre de origem) sobre `to` (cofre danificado) e confere que
+// o resultado tem o hash esperado. Cada cofre tem a própria chave: decifra com
+// a de um e cifra com a do outro.
+bool repairFile(const Located& fromVault, const std::wstring& from, const Located& toVault, const std::wstring& to,
+                const Sha256Digest& expected)
 {
-    auto good = Sha256::ofFile(from, true);
+    auto good = crypto::hashVaultFile(from, fromVault.cipher.get(), true);
     if (!good || good.value() != expected)
         return false;
     CopyOptions opt;
     opt.verify = VerifyMode::RereadUncached;
-    opt.tempDirectory = tmpDir;
+    opt.tempDirectory = toVault.layout.tmp();
+    opt.decrypt = fromVault.cipher.get();
+    opt.encrypt = toVault.cipher.get();
     auto copied = copyFileVerified(from, to, opt);
     return copied && copied.value().sha256 == expected;
 }
@@ -46,9 +53,15 @@ ScrubReport runScrub(const config::ConfigSet& set, double sampleRatio, bool repa
             if (!vc)
                 continue;
             std::string why;
-            if (auto loc = config::locateVault(*vc, &why))
-                vaults.push_back({vc->label, vault::JobLayout(loc->location, win::fromUtf8(job.id))});
-            else
+            if (auto loc = config::locateVault(*vc, &why)) {
+                auto cipher = crypto::cipherFor(loc->location);
+                if (!cipher) {
+                    report.problems.push_back("\"" + vc->label + "\" não verificado para " + job.id + ": "
+                                              + cipher.error().message);
+                    continue;
+                }
+                vaults.push_back({vc->label, vault::JobLayout(loc->location, win::fromUtf8(job.id)), cipher.value()});
+            } else
                 report.notes.push_back("\"" + vc->label + "\" desconectado (" + why + "); não verificado para " + job.id);
         }
 
@@ -77,8 +90,8 @@ ScrubReport runScrub(const config::ConfigSet& set, double sampleRatio, bool repa
                             auto otherCat = Catalog::load(other.layout.catalogFile());
                             const CatalogEntry* oe = otherCat ? otherCat.value().find(path) : nullptr;
                             if (oe && oe->sha256 == entry->sha256
-                                && repairFile(other.layout.currentFile(path), v.layout.currentFile(path), entry->sha256,
-                                              v.layout.tmp())) {
+                                && repairFile(other, other.layout.currentFile(path), v, v.layout.currentFile(path),
+                                              entry->sha256)) {
                                 fixed = true;
                                 ++report.repaired;
                                 report.notes.push_back(win::toUtf8(path) + " recuperado em \"" + v.label + "\" a partir de \""
@@ -97,7 +110,7 @@ ScrubReport runScrub(const config::ConfigSet& set, double sampleRatio, bool repa
                         continue;
                     ++report.checked;
                     const std::wstring file = win::joinPath(v.layout.root(), win::fromCatalogPath(d.relativePath));
-                    auto h = Sha256::ofFile(file, true);
+                    auto h = crypto::hashVaultFile(file, v.cipher.get(), true);
                     if (h && h.value() == d.sha256) {
                         ++report.ok;
                         continue;
@@ -108,7 +121,7 @@ ScrubReport runScrub(const config::ConfigSet& set, double sampleRatio, bool repa
                             if (&other == &v)
                                 continue;
                             const std::wstring src = win::joinPath(other.layout.root(), win::fromCatalogPath(d.relativePath));
-                            if (ops::pathExists(src) && repairFile(src, file, d.sha256, v.layout.tmp())) {
+                            if (ops::pathExists(src) && repairFile(other, src, v, file, d.sha256)) {
                                 fixed = true;
                                 ++report.repaired;
                                 report.notes.push_back("dump " + win::toUtf8(d.relativePath) + " recuperado em \"" + v.label

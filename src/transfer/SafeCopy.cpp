@@ -5,6 +5,8 @@
 
 #include <QUuid>
 
+#include <optional>
+
 namespace synkro {
 
 namespace {
@@ -115,18 +117,50 @@ Result<CopyOutcome> copyFileVerified(const std::wstring& source,
         if (!hasher.valid())
             return Error::make(ErrorCode::Internal, "provedor SHA-256 indisponível");
 
+        // Cadeia: origem -> [decifra] -> hash do conteúdo original -> [cifra] -> temporário.
+        std::optional<crypto::FileCipher::Encryptor> enc;
+        if (options.encrypt) {
+            auto e = options.encrypt->encryptor();
+            if (!e)
+                return e.error();
+            enc.emplace(std::move(e).value());
+        }
+        std::optional<crypto::FileCipher::Decryptor> dec;
+        if (options.decrypt)
+            dec.emplace(options.decrypt->decryptor());
+
+        std::uint64_t sourceBytes = 0, writtenBytes = 0;
+        const crypto::Sink toFile = [&](const std::uint8_t* d, std::size_t n) -> Status {
+            writtenBytes += n;
+            return writeAll(tmp.get(), d, static_cast<DWORD>(n));
+        };
+        const crypto::Sink plain = [&](const std::uint8_t* d, std::size_t n) -> Status {
+            if (auto st = hasher.update(d, n); !st)
+                return st;
+            outcome.bytes += n;
+            return enc ? enc->write(d, n, toFile) : toFile(d, n);
+        };
+
         for (;;) {
             DWORD read = 0;
             if (!::ReadFile(src.get(), buffer.data(), static_cast<DWORD>(buffer.size()), &read, nullptr))
                 return win::lastError("ler origem");
             if (read == 0)
                 break;
-            if (auto st = hasher.update(buffer.data(), read); !st)
+            sourceBytes += read;
+            const auto* bytes = reinterpret_cast<const std::uint8_t*>(buffer.data());
+            if (auto st = dec ? dec->write(bytes, read, plain) : plain(bytes, read); !st)
                 return st.error();
-            if (auto st = writeAll(tmp.get(), buffer.data(), read); !st)
-                return st.error();
-            outcome.bytes += read;
         }
+        if (dec) {
+            if (auto st = dec->finish(plain); !st)
+                return st.error();
+        }
+        if (enc) {
+            if (auto st = enc->finish(toFile); !st)
+                return st.error();
+        }
+        outcome.storedBytes = writtenBytes;
 
         auto digest = hasher.finish();
         if (!digest)
@@ -139,7 +173,7 @@ Result<CopyOutcome> copyFileVerified(const std::wstring& source,
             return after.error();
         if (after.value().size != before.value().size
             || after.value().basic.LastWriteTime.QuadPart != before.value().basic.LastWriteTime.QuadPart
-            || outcome.bytes != before.value().size) {
+            || sourceBytes != before.value().size) {
             return Error::make(ErrorCode::SourceChangedDuringCopy,
                                "a origem foi modificada durante a cópia; a cópia foi descartada");
         }
@@ -160,7 +194,8 @@ Result<CopyOutcome> copyFileVerified(const std::wstring& source,
 
     // Verificação do temporário antes de torná-lo visível.
     if (options.verify == VerifyMode::RereadUncached) {
-        auto reread = Sha256::ofFile(tempPath, /*bypassCache=*/true);
+        // Cifrado: a releitura decifra (e confere a autenticação de cada bloco).
+        auto reread = crypto::hashVaultFile(tempPath, options.encrypt, /*bypassCache=*/true);
         if (!reread)
             return reread.error();
         if (reread.value() != outcome.sha256)
@@ -171,7 +206,7 @@ Result<CopyOutcome> copyFileVerified(const std::wstring& source,
         if (!::GetFileAttributesExW(win::toExtendedPath(tempPath).c_str(), GetFileExInfoStandard, &info))
             return win::lastError("conferir arquivo gravado");
         const std::uint64_t written = (static_cast<std::uint64_t>(info.nFileSizeHigh) << 32) | info.nFileSizeLow;
-        if (written != outcome.bytes)
+        if (written != outcome.storedBytes)
             return Error::make(ErrorCode::VerificationFailed, "tamanho gravado difere do lido da origem");
     }
 

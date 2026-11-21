@@ -3,6 +3,7 @@
 #include "catalog/Catalog.h"
 #include "catalog/Manifest.h"
 #include "core/RunId.h"
+#include "crypto/VaultKey.h"
 #include "engine/Journal.h"
 #include "engine/Recovery.h"
 #include "engine/Retention.h"
@@ -87,6 +88,12 @@ private:
         if (!m_target.expectedVaultId.isEmpty() && identity.value().vaultId != m_target.expectedVaultId)
             return Error::make(ErrorCode::InvalidArgument,
                                "o disco em " + win::toUtf8(m_target.location) + " não é o cofre esperado");
+
+        // Cofre cifrado: sem a chave, nada é gravado (nem em claro).
+        auto cipher = crypto::cipherFor(m_target.location, m_req.secretsFile);
+        if (!cipher)
+            return cipher.error();
+        m_cipher = std::move(cipher).value();
 
         m_layout = vault::JobLayout(m_target.location, m_req.jobId);
         for (const auto& dir : {m_layout.current(), m_layout.runs(), m_layout.tmp(), m_layout.versionsRoot()}) {
@@ -223,6 +230,7 @@ private:
         CopyOptions opt;
         opt.verify = m_req.verify;
         opt.tempDirectory = m_layout.tmp();
+        opt.encrypt = m_cipher.get();
         if (hadPrevious) {
             opt.beforeCommit = [&]() -> Status {
                 auto st = ops::moveCurrentToVersions(m_layout, m_runId, previousPath);
@@ -320,6 +328,7 @@ private:
     const VaultTarget& m_target;
     const std::wstring& m_readRoot; // origem real ou o caminho equivalente dentro do snapshot VSS
     vault::JobLayout m_layout;
+    std::shared_ptr<const crypto::FileCipher> m_cipher; // cofre cifrado; nulo = em claro
     VaultRunResult m_result;
 };
 

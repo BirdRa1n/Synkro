@@ -23,6 +23,9 @@ struct VerifyResult {
 // Verificação periódica do cofre (scrub, architecture.md §11): relê os
 // arquivos de current/ SEM cache e compara com o SHA-256 do catálogo.
 // `samplePercent` em (0, 100]: 100 confere tudo.
-Result<VerifyResult> verifyVault(const vault::JobLayout& layout, double samplePercent = 100.0);
+// Cofre cifrado: a chave vem da memória do processo ou de `secretsFile`
+// (vazio = <dados>\secrets.dat); sem ela, KeyRequired.
+Result<VerifyResult> verifyVault(const vault::JobLayout& layout, double samplePercent = 100.0,
+                                 const std::wstring& secretsFile = {});
 
 } // namespace synkro

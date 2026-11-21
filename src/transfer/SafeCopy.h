@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/Result.h"
+#include "crypto/FileCipher.h"
 #include "hash/Sha256.h"
 
 #include <cstddef>
@@ -37,10 +38,18 @@ struct CopyOptions {
     // anterior para versions/<run>/, reduzindo ao mínimo a janela em que
     // current/ fica sem o arquivo. Uma falha aqui cancela a cópia.
     std::function<Status()> beforeCommit;
+
+    // Cofre cifrado (architecture.md §3.5): `encrypt` cifra o destino (backup
+    // para o cofre), `decrypt` decifra a origem (restauração a partir do
+    // cofre); os dois juntos recifram entre cofres (reparo do scrub). O
+    // SHA-256 do resultado é sempre o do conteúdo original.
+    const crypto::FileCipher* encrypt = nullptr;
+    const crypto::FileCipher* decrypt = nullptr;
 };
 
 struct CopyOutcome {
-    std::uint64_t bytes = 0;
+    std::uint64_t bytes = 0;          // conteúdo original
+    std::uint64_t storedBytes = 0;    // gravados no destino (maior, se cifrado)
     Sha256Digest sha256{};
     std::uint64_t sourceLastWriteTime = 0;
 };
