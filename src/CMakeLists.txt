@@ -30,6 +30,8 @@ add_library(synkro_core STATIC
     core/Result.h
     core/RunId.h
     core/RunId.cpp
+    core/SemVer.h
+    core/SemVer.cpp
     core/Version.h
     core/Version.cpp
 
@@ -149,6 +151,7 @@ target_link_libraries(synkro_core
     PRIVATE Qt6::Network mpr bcrypt crypt32 advapi32 yaml-cpp::yaml-cpp vssapi ole32 oleaut32 taskschd wbemuuid Synkro::SQLite3 Synkro::Zstd
 )
 target_compile_definitions(synkro_core PUBLIC
-    SYNKRO_VERSION_STRING="${PROJECT_VERSION}"
+    SYNKRO_VERSION_STRING="${SYNKRO_VERSION_FULL}"
+    SYNKRO_UPDATE_REPO="${SYNKRO_UPDATE_REPO}"
 )
 synkro_configure_target(synkro_core)

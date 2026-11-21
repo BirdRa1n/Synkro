@@ -9,6 +9,11 @@ const char* versionString() noexcept
     return SYNKRO_VERSION_STRING;
 }
 
+const char* updateRepository() noexcept
+{
+    return SYNKRO_UPDATE_REPO;
+}
+
 const char* nameOf(ErrorCode code) noexcept
 {
     switch (code) {
