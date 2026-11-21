@@ -235,9 +235,17 @@ void VaultsPage::refresh()
         connect(open, &QPushButton::clicked, [location] {
             QDesktopServices::openUrl(QUrl::fromLocalFile(fmt::q(synkro::vault::vaultRoot(location))));
         });
+        auto* removeBtn = button(QStringLiteral("Remover"), QStringLiteral("trash"));
+        removeBtn->setToolTip(QStringLiteral("Tira o cofre da configuração e, se você quiser, apaga os backups do disco"));
+        const std::wstring removeLocation = obs.connected ? obs.location : std::wstring();
+        connect(removeBtn, &QPushButton::clicked, this, [this, vaultCfgId, removeLocation] {
+            RemoveVaultDialog dlg(vaultCfgId, removeLocation, this);
+            dlg.exec();
+        });
         buttons->addWidget(verify);
         buttons->addWidget(open);
         buttons->addStretch(1);
+        buttons->addWidget(removeBtn);
         v->addLayout(buttons);
         v->addStretch(1);
 

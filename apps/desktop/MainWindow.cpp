@@ -372,6 +372,10 @@ void MainWindow::saveScreenshots(const QString& dir)
             if (b->text() == QStringLiteral("Copiar"))
                 b->click(); // confere a marcação "fora do histórico" na área de transferência
     }
+    if (!AppContext::instance().config().global.vaults.empty()) {
+        RemoveVaultDialog remove(AppContext::instance().config().global.vaults.front().id, L"E:\\", this);
+        shoot(&remove, QStringLiteral("14-remover-cofre.png"));
+    }
     {
         ImportConfigDialog import(this);
         shoot(&import, QStringLiteral("10-importar-config.png"));

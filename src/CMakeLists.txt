@@ -16,6 +16,8 @@ add_library(synkro_core STATIC
     config/ConfigWriter.cpp
     config/VaultAccess.h
     config/VaultAccess.cpp
+    config/VaultRemoval.h
+    config/VaultRemoval.cpp
     config/ShutdownPolicy.h
     config/ShutdownPolicy.cpp
     config/JobRequest.h

@@ -57,6 +57,25 @@ private:
     std::wstring m_checkedPath; // caminho examinado na última verificação
 };
 
+// Remover um cofre: tira da configuração (synkro.yml e tarefas) e, se o
+// usuário pedir e digitar o nome do cofre, apaga os backups do disco.
+class RemoveVaultDialog : public QDialog {
+    Q_OBJECT
+public:
+    // `location`: onde o cofre está conectado agora (vazio = desconectado).
+    RemoveVaultDialog(const std::string& vaultId, const std::wstring& location, QWidget* parent = nullptr);
+
+private:
+    void remove();
+    std::string m_vaultId;
+    std::wstring m_location;
+    QString m_label;
+    QCheckBox* m_deleteData = nullptr;
+    QLineEdit* m_confirm = nullptr;
+    class QPushButton* m_removeButton = nullptr;
+    std::vector<std::pair<std::wstring, std::string>> m_files;
+};
+
 // Mostra a chave de recuperação de um cofre recém-cifrado, uma única vez.
 // Só fecha depois que o usuário confirma que guardou a chave.
 class RecoveryKeyDialog : public QDialog {

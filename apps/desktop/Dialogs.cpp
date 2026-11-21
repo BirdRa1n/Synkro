@@ -10,6 +10,8 @@
 #include "config/ConfigPackage.h"
 #include "config/ConfigWriter.h"
 #include "config/PlanDescriber.h"
+#include "config/VaultRemoval.h"
+#include "engine/VaultOps.h"
 #include "core/Paths.h"
 #include "core/RunId.h"
 #include "crypto/VaultKey.h"
@@ -458,6 +460,148 @@ void AddVaultDialog::initialize()
         YamlEditorDialog editor(L"synkro.yml", this);
         editor.exec();
     }
+    accept();
+}
+
+// ============================================================================
+// RemoveVaultDialog
+// ============================================================================
+
+RemoveVaultDialog::RemoveVaultDialog(const std::string& vaultId, const std::wstring& location, QWidget* parent)
+    : QDialog(parent), m_vaultId(vaultId), m_location(location)
+{
+    auto& ctx = AppContext::instance();
+    const auto* vc = ctx.config().global.findVault(vaultId);
+    m_label = vc ? fmt::q(vc->label) : fmt::q(vaultId);
+    setWindowTitle(QStringLiteral("Remover cofre"));
+    resize(620, 460);
+    auto* v = new QVBoxLayout(this);
+    v->setContentsMargins(24, 22, 24, 22);
+    v->setSpacing(12);
+    v->addWidget(title(QStringLiteral("Remover o cofre \"%1\"").arg(m_label)));
+
+    auto plan = synkro::config::planVaultRemoval(ctx.config(), vaultId,
+                                                 [&ctx](const std::wstring& rel) { return ctx.readConfigFile(rel); });
+    QString text;
+    bool possible = false;
+    if (!plan) {
+        text = fmt::q(plan.error().message);
+    } else if (!plan.value().possible()) {
+        text = QStringLiteral("Não é possível remover agora:");
+        for (const auto& b : plan.value().blockers)
+            text += QStringLiteral("\n• ") + fmt::q(b);
+    } else {
+        possible = true;
+        m_files = plan.value().files;
+        text = QStringLiteral("O cofre sai da configuração: o Synkro deixa de gravar nele.");
+        if (!plan.value().affectedJobs.empty()) {
+            text += QStringLiteral(" Tarefas que deixam de usá-lo (continuam nos outros cofres):");
+            for (const auto& j : plan.value().affectedJobs)
+                text += QStringLiteral("\n• ") + fmt::q(j);
+        }
+        text += QStringLiteral("\n\nOs backups já gravados no disco continuam lá, a menos que você marque a opção abaixo; "
+                               "o disco pode ser cadastrado de novo depois.");
+    }
+    auto* info = label(text, possible ? "muted" : "fact");
+    info->setWordWrap(true);
+    v->addWidget(info);
+
+    m_deleteData = new QCheckBox(QStringLiteral("Também apagar os backups gravados neste disco (pasta SynkroVault)"));
+    m_deleteData->setEnabled(possible && !location.empty());
+    v->addWidget(m_deleteData);
+    auto* dataHint = label(location.empty()
+                               ? QStringLiteral("Disco não conectado: só é possível tirar o cofre da configuração.")
+                               : QStringLiteral("Apaga todas as versões de todas as tarefas em %1. Não há como desfazer.")
+                                     .arg(QDir::toNativeSeparators(fmt::q(synkro::vault::vaultRoot(location)))),
+                           "muted");
+    dataHint->setWordWrap(true);
+    v->addWidget(dataHint);
+    m_confirm = new QLineEdit;
+    m_confirm->setPlaceholderText(QStringLiteral("Digite %1 para confirmar").arg(m_label));
+    m_confirm->setVisible(false);
+    v->addWidget(m_confirm);
+    v->addStretch(1);
+
+    auto* buttons = new QHBoxLayout;
+    buttons->addStretch(1);
+    auto* cancel = ui::button(QStringLiteral("Cancelar"));
+    connect(cancel, &QPushButton::clicked, this, &QDialog::reject);
+    m_removeButton = ui::button(QStringLiteral("Remover cofre"), QStringLiteral("trash"), true);
+    m_removeButton->setEnabled(possible);
+    buttons->addWidget(cancel);
+    buttons->addWidget(m_removeButton);
+    v->addLayout(buttons);
+
+    auto update = [this, possible] {
+        const bool wipe = m_deleteData->isChecked();
+        m_confirm->setVisible(wipe);
+        m_removeButton->setText(wipe ? QStringLiteral("Remover e apagar os backups") : QStringLiteral("Remover cofre"));
+        m_removeButton->setEnabled(possible && (!wipe || m_confirm->text().trimmed() == m_label));
+    };
+    connect(m_deleteData, &QCheckBox::toggled, this, update);
+    connect(m_confirm, &QLineEdit::textChanged, this, update);
+    connect(m_removeButton, &QPushButton::clicked, this, [this] { remove(); });
+}
+
+void RemoveVaultDialog::remove()
+{
+    auto& ctx = AppContext::instance();
+    const auto* vc = ctx.config().global.findVault(m_vaultId);
+    const std::string uuid = vc ? vc->vaultId : std::string();
+    const synkro::config::SecretRef netSecret = vc ? vc->netPassword : synkro::config::SecretRef{};
+
+    // 1. Configuração (tarefas antes do synkro.yml).
+    for (const auto& [rel, content] : m_files) {
+        if (auto st = ctx.writeConfigFile(rel, content); !st) {
+            QMessageBox::warning(this, windowTitle(),
+                                 QStringLiteral("Não foi possível gravar %1: %2").arg(fmt::q(rel), fmt::q(st.error().message)));
+            ctx.reload();
+            return;
+        }
+    }
+
+    // 2. Segredos que só este cofre usava: a chave de cofre cifrado e a senha do compartilhamento.
+    synkro::SecretStore store(synkro::secretsFile());
+    if (!uuid.empty())
+        (void)store.remove(synkro::crypto::secretNameFor(QString::fromStdString(uuid)));
+    if (netSecret.kind == synkro::config::SecretRef::Kind::Secret) {
+        bool usedElsewhere = false;
+        for (const auto& other : ctx.config().global.vaults)
+            usedElsewhere = usedElsewhere || (other.id != m_vaultId && other.netPassword.name == netSecret.name);
+        for (const auto& j : ctx.config().jobs)
+            for (const auto& s : j.secrets)
+                usedElsewhere = usedElsewhere || s.name == netSecret.name;
+        if (!usedElsewhere)
+            (void)store.remove(netSecret.name);
+    }
+
+    // 3. Os backups no disco, se pedido.
+    QString result = QStringLiteral("Cofre \"%1\" removido da configuração.").arg(m_label);
+    if (m_deleteData->isChecked() && !m_location.empty()) {
+        setEnabled(false);
+        QApplication::setOverrideCursor(Qt::WaitCursor);
+        const std::wstring root = synkro::vault::vaultRoot(m_location);
+        auto future = QtConcurrent::run([root] {
+            std::uint64_t freed = 0;
+            auto st = synkro::ops::removeTree(root, &freed);
+            return std::make_pair(st ? std::string() : st.error().message, freed);
+        });
+        while (!future.isFinished())
+            QApplication::processEvents(QEventLoop::AllEvents, 100);
+        QApplication::restoreOverrideCursor();
+        setEnabled(true);
+        const auto [error, freed] = future.result();
+        if (error.empty())
+            result += QStringLiteral("\nBackups apagados do disco (%1 liberados).").arg(fmt::bytes(freed));
+        else
+            result += QStringLiteral("\nOs backups não foram apagados por completo: %1. Confira se nenhum backup está "
+                                     "rodando e apague a pasta %2 manualmente.")
+                          .arg(fmt::q(error), QDir::toNativeSeparators(fmt::q(root)));
+    } else if (!m_location.empty()) {
+        result += QStringLiteral("\nOs backups continuam no disco, em %1.").arg(QDir::toNativeSeparators(fmt::q(synkro::vault::vaultRoot(m_location))));
+    }
+    ctx.reload();
+    QMessageBox::information(this, windowTitle(), result);
     accept();
 }
 
