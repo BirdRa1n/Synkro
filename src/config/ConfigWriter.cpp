@@ -166,6 +166,115 @@ bool isPristineGenerated(const std::string& original)
     return digest && toHex(digest.value()) == stored;
 }
 
+std::string emitVaultEntry(const VaultConfig& v, int indent)
+{
+    const std::string pad(static_cast<std::size_t>(indent), ' ');
+    const std::string in = pad + "  ";
+    std::ostringstream o;
+    o << pad << "- id: " << v.id << "\n"
+      << in << "vault_id: " << v.vaultId << "\n"
+      << in << "label: " << quote(v.label) << "\n";
+    if (!v.path.empty())
+        o << in << "path: " << quote(v.path) << "\n";
+    if (!v.netUser.empty())
+        o << in << "credentials:\n"
+          << in << "  user: " << quote(v.netUser) << "\n"
+          << in << "  password: " << secret(v.netPassword) << "\n";
+    o << in << "rotation: " << (v.rotation ? "true" : "false") << "\n"
+      << in << "max_absence: " << formatDuration(v.maxAbsenceSeconds) << "\n"
+      << in << "free_space_alert: " << percent(v.freeSpaceAlert) << "\n";
+    return o.str();
+}
+
+Result<std::string> insertVaultIntoGlobalYaml(const std::string& text, const VaultConfig& vault)
+{
+    // Linhas, sem perder o fim de linha original (\r\n ou \n).
+    const bool crlf = text.find("\r\n") != std::string::npos;
+    const std::string eol = crlf ? "\r\n" : "\n";
+    std::vector<std::string> lines;
+    std::size_t pos = 0;
+    while (pos < text.size()) {
+        std::size_t nl = text.find('\n', pos);
+        std::string line = text.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos);
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+        lines.push_back(line);
+        if (nl == std::string::npos)
+            break;
+        pos = nl + 1;
+    }
+
+    auto trimmed = [](const std::string& s) {
+        const auto a = s.find_first_not_of(" \t");
+        return a == std::string::npos ? std::string() : s.substr(a);
+    };
+    // Chave "vaults:" no nível de cima (coluna 0), com ou sem "[]" e comentário.
+    std::size_t keyLine = lines.size();
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+        const std::string& l = lines[i];
+        if (l.rfind("vaults:", 0) != 0)
+            continue;
+        std::string rest = trimmed(l.substr(7));
+        if (const auto hash = rest.find('#'); hash != std::string::npos)
+            rest = trimmed(rest.substr(0, hash));
+        while (!rest.empty() && (rest.back() == ' ' || rest.back() == '\t'))
+            rest.pop_back();
+        if (!rest.empty() && rest != "[]")
+            return Error::make(ErrorCode::Unsupported, "a lista vaults está num formato que o Synkro não edita sozinho");
+        if (rest == "[]")
+            lines[i] = "vaults:";
+        keyLine = i;
+        break;
+    }
+
+    if (keyLine == lines.size()) {
+        if (!lines.empty() && !lines.back().empty())
+            lines.emplace_back();
+        lines.emplace_back("vaults:");
+        keyLine = lines.size() - 1;
+    }
+
+    // Fim da lista: última linha indentada (ou comentário/vazia) antes da próxima chave de topo.
+    int indent = -1;
+    std::size_t insertAt = keyLine + 1;
+    for (std::size_t i = keyLine + 1; i < lines.size(); ++i) {
+        const std::string& l = lines[i];
+        const std::string t = trimmed(l);
+        if (t.empty() || t[0] == '#')
+            continue;
+        const bool topLevel = l[0] != ' ' && l[0] != '\t' && t.rfind("- ", 0) != 0;
+        if (topLevel)
+            break;
+        if (indent < 0 && t.rfind("- ", 0) == 0)
+            indent = static_cast<int>(l.size() - t.size());
+        if (t == "[]") { // "vaults:" seguido de "  []"
+            lines.erase(lines.begin() + static_cast<std::ptrdiff_t>(i));
+            --i;
+            continue;
+        }
+        insertAt = i + 1;
+    }
+    if (indent < 0)
+        indent = 2;
+
+    std::vector<std::string> entry;
+    {
+        const std::string e = emitVaultEntry(vault, indent);
+        std::size_t p = 0;
+        while (p < e.size()) {
+            const std::size_t nl = e.find('\n', p);
+            entry.push_back(e.substr(p, nl - p));
+            p = nl + 1;
+        }
+    }
+    lines.insert(lines.begin() + static_cast<std::ptrdiff_t>(insertAt), entry.begin(), entry.end());
+
+    std::string out;
+    for (std::size_t i = 0; i < lines.size(); ++i)
+        out += lines[i] + (i + 1 < lines.size() || text.empty() || text.back() == '\n' ? eol : "");
+    return out;
+}
+
 std::string emitGlobal(const GlobalConfig& g)
 {
     std::ostringstream o;
@@ -176,20 +285,8 @@ std::string emitGlobal(const GlobalConfig& g)
     o << "\nvaults:\n";
     if (g.vaults.empty())
         o << "  []\n";
-    for (const auto& v : g.vaults) {
-        o << "  - id: " << v.id << "\n"
-          << "    vault_id: " << v.vaultId << "\n"
-          << "    label: " << quote(v.label) << "\n";
-        if (!v.path.empty())
-            o << "    path: " << quote(v.path) << "\n";
-        if (!v.netUser.empty())
-            o << "    credentials:\n"
-              << "      user: " << quote(v.netUser) << "\n"
-              << "      password: " << secret(v.netPassword) << "\n";
-        o << "    rotation: " << (v.rotation ? "true" : "false") << "\n"
-          << "    max_absence: " << formatDuration(v.maxAbsenceSeconds) << "\n"
-          << "    free_space_alert: " << percent(v.freeSpaceAlert) << "\n";
-    }
+    for (const auto& v : g.vaults)
+        o << emitVaultEntry(v, 2);
 
     o << "\ndefaults:\n";
     if (!g.defaultVaults.empty())

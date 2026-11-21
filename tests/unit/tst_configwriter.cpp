@@ -155,6 +155,83 @@ private slots:
         QCOMPARE(formatDuration(600), std::string("10m"));
         QCOMPARE(formatDuration(45), std::string("45s"));
     }
+
+    // Inserir um cofre num synkro.yml editado à mão: só a lista vaults muda.
+    void insertVaultPreservesHandEditedFile()
+    {
+        VaultConfig nv;
+        nv.id = "hd-novo";
+        nv.vaultId = "9d3f6a10-5e2b-4c8d-b7a1-3f0e9c2d4b55";
+        nv.label = "HD Novo";
+        nv.path = L"F:\\";
+        nv.maxAbsenceSeconds = 86400;
+
+        const std::string hand =
+            "# Configuração da loja — feita pelo técnico\n"
+            "version: 1\n"
+            "\n"
+            "vaults:\n"
+            "    # disco que fica no PDV\n"
+            "    - id: hd-externo-1\n"
+            "      vault_id: 7f1c9a2e-3b0d-4c7e-9a51-0d2b6e1f4a10\n"
+            "      label: \"HD Externo 1\"\n"
+            "\n"
+            "defaults:\n"
+            "  vaults: [hd-externo-1]   # padrão\n";
+        auto out = insertVaultIntoGlobalYaml(hand, nv);
+        QVERIFY(out);
+        const std::string& t = out.value();
+        QVERIFY(t.find("# Configuração da loja — feita pelo técnico\n") == 0);
+        QVERIFY(t.find("    # disco que fica no PDV\n") != std::string::npos);
+        QVERIFY(t.find("  vaults: [hd-externo-1]   # padrão\n") != std::string::npos);
+        QVERIFY(t.find("    - id: hd-novo\n") != std::string::npos); // mesma indentação da lista
+        QVERIFY(t.find("- id: hd-novo") < t.find("defaults:"));
+        std::vector<Diagnostic> d;
+        const GlobalConfig g = parseGlobalDocument(t, L"synkro.yml", d);
+        QVERIFY2(std::none_of(d.begin(), d.end(), [](const Diagnostic& x) { return x.severity == Severity::Error; }),
+                 qPrintable(dump(d)));
+        QCOMPARE(g.vaults.size(), std::size_t(2));
+        QVERIFY(g.findVault("hd-novo") && g.findVault("hd-novo")->path == L"F:\\");
+        QCOMPARE(g.defaultVaults, std::vector<std::string>{"hd-externo-1"}); // padrões intactos
+    }
+
+    void insertVaultOtherShapes()
+    {
+        VaultConfig nv;
+        nv.id = "nas";
+        nv.vaultId = "9d3f6a10-5e2b-4c8d-b7a1-3f0e9c2d4b55";
+        nv.label = "NAS";
+        nv.maxAbsenceSeconds = 86400;
+        auto parsesWithNas = [](const std::string& t) {
+            std::vector<Diagnostic> d;
+            const GlobalConfig g = parseGlobalDocument(t, L"synkro.yml", d);
+            return g.findVault("nas") != nullptr
+                   && std::none_of(d.begin(), d.end(), [](const Diagnostic& x) { return x.severity == Severity::Error; });
+        };
+
+        // Lista vazia em linha.
+        auto empty = insertVaultIntoGlobalYaml("version: 1\nvaults: []\n", nv);
+        QVERIFY(empty && parsesWithNas(empty.value()));
+        QVERIFY(empty.value().find("[]") == std::string::npos);
+
+        // Itens na coluna 0 ("- id:" logo abaixo de vaults:).
+        auto col0 = insertVaultIntoGlobalYaml(
+            "version: 1\nvaults:\n- id: a\n  vault_id: 7f1c9a2e-3b0d-4c7e-9a51-0d2b6e1f4a10\nlogging:\n  level: info\n", nv);
+        QVERIFY(col0 && parsesWithNas(col0.value()));
+        QVERIFY(col0.value().find("\n- id: nas\n") != std::string::npos);
+
+        // Sem a chave vaults: é criada no fim.
+        auto none = insertVaultIntoGlobalYaml("version: 1\nlogging:\n  level: info", nv);
+        QVERIFY(none && parsesWithNas(none.value()));
+
+        // Quebras de linha CRLF são mantidas.
+        auto crlf = insertVaultIntoGlobalYaml("version: 1\r\nvaults: []\r\n", nv);
+        QVERIFY(crlf);
+        QVERIFY(crlf.value().find("\r\n  - id: nas\r\n") != std::string::npos);
+
+        // Lista em linha com itens: não edita (seria arriscado).
+        QVERIFY(!insertVaultIntoGlobalYaml("version: 1\nvaults: [{id: a}]\n", nv));
+    }
 };
 
 QTEST_GUILESS_MAIN(TstConfigWriter)
