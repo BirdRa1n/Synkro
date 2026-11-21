@@ -197,9 +197,8 @@ O alerta e o `synkro-worker status` mostram o motivo.
 | `o compartilhamento respondeu, mas não há cofre do Synkro em ...` | A pasta foi apagada ou movida no NAS. Restaure-a ou crie um cofre novo (`vault init`) e troque o `vault_id`. |
 
 **Restaurar a partir do NAS:**
-- **Linha de comando:** `synkro-worker restore --vault \\nas01\backup\pdv01 --job pdv-arquivos --to D:\Restaurado`. Se a sessão do administrador não tiver acesso ao NAS, rode `net use \\nas01\backup /user:nas01\synkro` antes.
-- **Desktop:** a tela **Restaurar** ainda lista só discos conectados a esta máquina.
-- **PDV perdido:** de um computador novo, o mesmo comando restaura tudo, porque o cofre é autossuficiente.
+- **Desktop:** em **Restaurar**, os cofres em rede declarados e acessíveis aparecem na lista. Em **Cofre em rede…**, você informa a pasta, o usuário e a senha; isso funciona até num computador novo, sem configuração, porque o cofre é autossuficiente. Nada é gravado no NAS.
+- **Linha de comando:** `synkro-worker restore --vault \\nas01\backup\pdv01 --job pdv-arquivos --to D:\Restaurado`. Se a sessão não tiver acesso ao NAS, rode `net use \\nas01\backup /user:nas01\synkro` antes.
 
 ### 7.5. Códigos de saída do worker
 

@@ -238,6 +238,15 @@ notifications:
 
 Um cofre com `path` UNC (`//servidor/compartilhamento/pasta`) fica numa pasta de outra máquina: protege contra a perda do PDV inteiro. Como preparar:
 
+**Pelo desktop** (como administrador): **Cofres → Adicionar cofre → Pasta na rede**.
+1. Informe o caminho, o usuário e a senha.
+2. Clique em **Verificar**: o Synkro checa o servidor, a gravação e se a pasta fica em outra máquina.
+3. Inicialize. O Synkro guarda a senha no cofre de segredos (`cofre-<id>`) e acrescenta o cofre com `credentials` ao `synkro.yml`.
+
+O desktop entra no compartilhamento com a sua sessão e nunca derruba uma unidade que você já tenha mapeado para o mesmo servidor. Nesse caso, a verificação usa a conexão existente.
+
+**Pela linha de comando:**
+
 1. **Crie a pasta e o usuário no servidor.** Crie no NAS uma pasta por PDV, por exemplo `backup/pdv01`. Dê permissão de leitura e gravação a um usuário próprio do Synkro, de preferência sem acesso a outras pastas.
 2. **Cadastre a senha** (como administrador): `synkro-worker secret set nas-synkro`.
 3. **Inicialize o cofre:**

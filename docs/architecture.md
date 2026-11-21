@@ -730,9 +730,9 @@ Scrub agendado com reparo entre cofres, saúde SMART, instalador MSI assinado, g
 
 > **Entregue (2026-11-20):** notificações externas por e-mail, webhook (JSON próprio, Slack, Discord, Teams) e Telegram, com fila, novas tentativas, lembretes, aviso de resolução e relatório diário (§12.1). **Cofres em compartilhamento de rede** (NAS/servidor) com credencial via DPAPI, conexão sem letra de unidade e sondagem do servidor (§3.3.1).
 >
-> **Pendências dos cofres em rede:**
-> - O desktop mostra o estado do cofre em rede, mas ainda não cadastra um nem restaura a partir dele: o cadastro é feito com `vault init \\servidor\...` e a restauração com `restore --vault \\servidor\...`.
-> - Falta validar com um NAS real; os testes usam o compartilhamento administrativo da própria máquina por loopback.
+> No desktop, o cofre em rede é cadastrado em Cofres → Adicionar cofre → Pasta na rede, e a restauração vale também de um computador novo (Restaurar → Cofre em rede…).
+>
+> **Pendência dos cofres em rede:** validar com um NAS real (Synology, QNAP, Samba) e em domínio com a conta do computador; os testes usam o compartilhamento administrativo da própria máquina por loopback.
 
 Notificações externas (e-mail/webhook), compartilhamentos de rede (com credencial guardada via DPAPI), compressão/criptografia do cofre, deduplicação, USN Journal (se as medições justificarem), destino em nuvem com imutabilidade, outras plataformas.
 
