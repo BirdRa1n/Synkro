@@ -38,6 +38,10 @@ const QHash<QString, QString>& paths()
         {"copy", "M9 9h11v11H9zM5 15H4V4h11v1"},
         {"lock", "M5 11h14v10H5zM8 11V7a4 4 0 0 1 8 0v4"},
         {"trash", "M4 7h16M10 11v6M14 11v6M5 7l1 13a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1l1-13M9 7V4h6v3"},
+        {"clock", "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7v5l3 2"},
+        {"terminal", "M3 5h18v14H3zM7 10l3 2-3 2M12 15h5"},
+        {"flow", "M3 5h6v4H3zM15 15h6v4h-6zM15 3h6v4h-6zM9 7h3v10h3M12 5h3"},
+        {"zoom-fit", "M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"},
     };
     return p;
 }

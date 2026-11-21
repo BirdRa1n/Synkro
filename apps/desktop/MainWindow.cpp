@@ -2,6 +2,7 @@
 
 #include "AppContext.h"
 #include "Dialogs.h"
+#include "FlowEditor.h"
 #include "Format.h"
 #include "Icons.h"
 #include "Pages.h"
@@ -306,6 +307,30 @@ void MainWindow::saveScreenshots(const QString& dir)
     if (!AppContext::instance().config().jobs.empty()) {
         YamlEditorDialog editor(AppContext::instance().config().jobs.front().file, this);
         shoot(&editor, QStringLiteral("8-editor-yaml.png"));
+    }
+    if (!AppContext::instance().config().jobs.empty()) {
+        // Modo fácil: um exemplo com comandos antes/depois, além da tarefa real.
+        auto job = AppContext::instance().config().jobs.front();
+        for (ThemeMode mode : {ThemeMode::Light, ThemeMode::Dark}) {
+            Theme::instance().setMode(mode);
+            const QString suffix = mode == ThemeMode::Dark ? QStringLiteral("-escuro.png") : QStringLiteral("-claro.png");
+            FlowEditorDialog flow(job, this);
+            flow.selectFirst(synkro::config::flow::NodeKind::Source);
+            shoot(&flow, QStringLiteral("15-modo-facil") + suffix);
+        }
+        Theme::instance().setMode(ThemeMode::Light);
+        synkro::config::HookCommand before, after;
+        before.run = {"C:\\PDV\\parar-servico.cmd"};
+        after.run = {"C:\\PDV\\iniciar-servico.cmd"};
+        job.hooks.before = {before};
+        job.hooks.onSuccess = {after};
+        synkro::config::ScheduleTrigger boot;
+        boot.kind = synkro::config::TriggerKind::OnStartup;
+        boot.delaySeconds = 600;
+        job.schedule.push_back(boot);
+        FlowEditorDialog flow(job, this);
+        flow.selectFirst(synkro::config::flow::NodeKind::Command);
+        shoot(&flow, QStringLiteral("15-modo-facil-comandos.png"));
     }
     {
         AddVaultDialog add(this);

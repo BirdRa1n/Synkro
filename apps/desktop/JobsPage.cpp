@@ -1,9 +1,11 @@
 #include "AppContext.h"
 #include "Dialogs.h"
+#include "FlowEditor.h"
 #include "Format.h"
 #include "Pages.h"
 #include "Theme.h"
 
+#include "config/ConfigWriter.h"
 #include "config/PlanDescriber.h"
 #include "platform/windows/Win32.h"
 
@@ -39,7 +41,7 @@ JobsPage::JobsPage() : Page(QStringLiteral("Tarefas"), QStringLiteral("O que é 
     auto* row = new QHBoxLayout;
     auto* run = button(QStringLiteral("Executar agora"), QStringLiteral("play"));
     auto* plan = button(QStringLiteral("O que esta tarefa vai fazer"), QStringLiteral("jobs"));
-    auto* edit = button(QStringLiteral("Editar YAML"), QStringLiteral("edit"));
+    auto* edit = button(QStringLiteral("Editar"), QStringLiteral("edit"));
     connect(run, &QPushButton::clicked, this, [this] {
         if (!selectedJob().isEmpty())
             emit runJobRequested(selectedJob());
@@ -52,8 +54,8 @@ JobsPage::JobsPage() : Page(QStringLiteral("Tarefas"), QStringLiteral("O que é 
     row->addStretch(1);
     body()->addLayout(row);
 
-    body()->addWidget(label(QStringLiteral("Tarefas criadas pelo assistente podem ser editadas no próprio assistente; se o "
-                                           "arquivo YAML tiver sido alterado à mão, ele abre no editor, sem perder comentários."),
+    body()->addWidget(label(QStringLiteral("Editar abre o modo fácil (blocos ligados, como num fluxo) ou o editor YAML, à "
+                                           "sua escolha. Os dois validam antes de gravar."),
                             "muted"));
 }
 
@@ -103,8 +105,31 @@ void JobsPage::editSelected()
     const auto* job = AppContext::instance().config().findJob(id.toStdString());
     if (!job)
         return;
-    YamlEditorDialog dlg(job->file, this);
-    if (dlg.exec() == QDialog::Accepted)
+    const bool handEdited = !synkro::config::isPristineGenerated(AppContext::instance().readConfigFile(job->file));
+    QMessageBox ask(this);
+    ask.setWindowTitle(QStringLiteral("Editar tarefa"));
+    ask.setIcon(QMessageBox::Question);
+    ask.setText(QStringLiteral("Como você quer editar \"%1\"?").arg(fmt::q(job->name)));
+    QString info = QStringLiteral("Modo fácil: blocos ligados por linhas (quando rodar, comandos antes/depois e para quais "
+                                  "cofres vai a cópia).\nEditor YAML: o arquivo completo, com todas as opções.");
+    if (handEdited)
+        info += QStringLiteral("\n\nEste arquivo foi editado à mão: no modo fácil, o resultado passa pelo editor YAML para "
+                               "você conferir antes de gravar (comentários não são mantidos).");
+    ask.setInformativeText(info);
+    auto* easy = ask.addButton(QStringLiteral("Modo fácil (blocos)"), QMessageBox::AcceptRole);
+    auto* yaml = ask.addButton(QStringLiteral("Editor YAML"), QMessageBox::AcceptRole);
+    ask.addButton(QStringLiteral("Cancelar"), QMessageBox::RejectRole);
+    ask.setDefaultButton(easy);
+    ask.exec();
+    int result = QDialog::Rejected;
+    if (ask.clickedButton() == easy) {
+        FlowEditorDialog dlg(*job, this);
+        result = dlg.exec();
+    } else if (ask.clickedButton() == yaml) {
+        YamlEditorDialog dlg(job->file, this);
+        result = dlg.exec();
+    }
+    if (result == QDialog::Accepted)
         AppContext::instance().reload();
 }
 

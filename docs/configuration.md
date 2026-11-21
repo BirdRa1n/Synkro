@@ -62,7 +62,7 @@ Próxima execução usa a nova configuração
 Bibliotecas de YAML não preservam comentários ao regravar um arquivo. Para não apagar anotações do usuário:
 
 - arquivos criados pelo desktop recebem um cabeçalho `# Gerado pelo Synkro Desktop` e o hash do conteúdo gravado;
-- se o desktop detectar que o arquivo foi **alterado à mão** (hash diferente), a tarefa abre no **editor YAML integrado** (com realce, validação ao digitar e o painel "O que esta tarefa vai fazer"), em vez do formulário — o arquivo nunca é regravado sem que o usuário veja o resultado.
+- se o desktop detectar que o arquivo foi **alterado à mão** (hash diferente), ele nunca é regravado sem que o usuário veja o resultado: o **editor YAML integrado** (com realce, validação ao digitar e o painel "O que esta tarefa vai fazer") mostra o texto antes de salvar, inclusive quando a edição começa no modo fácil (§3.2).
 
 **Ao adicionar um cofre** (Cofres → Adicionar cofre), o desktop pergunta como incluí-lo no `synkro.yml`:
 
@@ -74,7 +74,26 @@ Bibliotecas de YAML não preservam comentários ao regravar um arquivo. Para nã
 - **Revisar no editor YAML:** abre o `synkro.yml` já com o cofre inserido, ainda **sem salvar**, para conferir e ajustar (rodízio, limite de ausência, espaço livre). **Salvar** grava; **Cancelar** não altera nada.
 - **Depois:** o cofre fica pronto no disco, fora da configuração. Basta adicioná-lo de novo, e ele é reaproveitado.
 
-### 3.2. Autocompletar em editores externos
+### 3.2. Modo fácil (blocos)
+
+Em **Tarefas → Editar**, o desktop pergunta se a tarefa abre no **modo fácil** ou no **editor YAML**. O modo fácil mostra a tarefa como um fluxo de blocos ligados por linhas:
+
+| Bloco | Cor | Liga-se a | Vira no YAML |
+|---|---|---|---|
+| Gatilho (todo dia, dias da semana, mensal, a cada intervalo, ao ligar o PC, ao entrar no Windows) | laranja | origem, ou o primeiro comando "antes" | `schedule` |
+| Comando antes | cinza | próximo comando ou origem | `hooks.before` (na ordem da cadeia) |
+| Origem (a tarefa) | roxo | saída **cofres** → cofres e comandos; **sucesso**/**falha** → comandos | — |
+| Cofre | verde | — | `vaults` (de cima para baixo) |
+| Comando depois | cinza | próximo comando | `hooks.after` (saída cofres), `hooks.on_success`, `hooks.on_failure` |
+
+- Blocos novos são puxados da paleta à esquerda (ou clique duas vezes). Para ligar, arraste da bolinha de saída até outro bloco. Para desligar ou remover, clique na linha ou no bloco e tecle **Delete** (ou use o botão direito).
+- Todos os cofres do `synkro.yml` aparecem no quadro; acrescentar um disco à tarefa é só ligar a saída **cofres** a ele.
+- Ligações sem sentido são recusadas com o motivo (ex.: gatilho direto num cofre, comando com duas saídas, ciclo). Blocos soltos não entram no arquivo, e o desktop avisa antes de salvar.
+- O painel à direita ajusta o bloco selecionado: horário e dias do gatilho; comando, tempo limite e "se falhar" (`on_error`); nome, pasta e exclusões da origem; desligar depois do backup.
+- O que o modo fácil não mostra (retenção, verificação, proteções, conexão de banco) continua como está no arquivo.
+- A validação é a mesma do editor YAML: **Salvar** só fica ativo sem erros. Em arquivo **editado à mão**, o resultado abre no editor YAML para conferir antes de gravar, porque o modo fácil regenera o arquivo e não mantém comentários.
+
+### 3.3. Autocompletar em editores externos
 
 Cada arquivo começa com:
 
