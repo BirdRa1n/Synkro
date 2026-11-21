@@ -48,6 +48,7 @@ Backup incremental, versionado e redundante para dados críticos no Windows, com
 | Pacote de instalação (`installer\package.ps1` + `install.ps1`): permissões, Visualizador de Eventos, menu Iniciar, Programas e Recursos | ✅ |
 | Início automático na bandeja (instalador para todos os usuários; opção por usuário em Configurações) | ✅ |
 | Teste de estresse (~100 mil arquivos, `SYNKRO_STRESS=1`) | ✅ |
+| Instalador `Synkro-Setup.exe`, release automática pelo GitHub Actions e atualização automática no app (canal estável e beta) | ✅ |
 | Instalador MSI assinado (depende do WiX e de um certificado de assinatura de código) | pendente |
 
 ## Documentação
@@ -58,6 +59,7 @@ Backup incremental, versionado e redundante para dados críticos no Windows, com
 | [docs/database-backup.md](docs/database-backup.md) | Backup consistente de bancos de dados |
 | [docs/configuration.md](docs/configuration.md) | Configuração em YAML |
 | [docs/operations.md](docs/operations.md) | Guia de operação: instalação, permissões, alertas, restauração, troca de disco |
+| [docs/releases.md](docs/releases.md) | Versões, publicação na aba Releases (GitHub Actions) e atualização automática do app |
 | [docs/pilot.md](docs/pilot.md) | Roteiro do piloto em PDVs: critérios, instalação, falhas provocadas, acompanhamento e avaliação |
 | [config/examples/](config/examples) | YAMLs de exemplo (validados pelos testes) |
 

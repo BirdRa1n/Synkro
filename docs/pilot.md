@@ -49,8 +49,8 @@ Use **cofre cifrado** nos discos que saem da loja e no NAS. Anote a chave de rec
 
 ## 3. Antes de ir à loja
 
-1. Gere o pacote: `powershell -ExecutionPolicy Bypass -File installer\package.ps1`. Confira o `SHA256SUMS` do zip.
-2. Leve: o zip, os discos de rodízio **novos** (vazios), esta folha e a ficha do PDV.
+1. Baixe o `Synkro-Setup-<versão>.exe` da beta mais recente na aba Releases e confira o `.sha256`.
+2. Leve: o instalador, os discos de rodízio **novos** (vazios), esta folha e a ficha do PDV.
 3. Se houver NAS, crie a pasta do PDV e um usuário só do Synkro com permissão de gravação nela ([configuration.md §5.2](configuration.md#52-cofres-em-rede-nas-ou-servidor)).
 4. Prepare o canal de aviso: senha de app do e-mail ou o token do bot e o `chat_id` do Telegram.
 
@@ -60,7 +60,7 @@ Use **cofre cifrado** nos discos que saem da loja e no NAS. Anote a chave de rec
 
 Tudo como **administrador**.
 
-1. **Instale:** extraia o zip e rode `powershell -ExecutionPolicy Bypass -File install.ps1` ([operations.md §1.2](operations.md#12-instalar-ou-atualizar)).
+1. **Instale:** execute o `Synkro-Setup-<versão>.exe` da aba Releases ([operations.md §1.2](operations.md#12-instalar-ou-atualizar)). Em Configurações → Atualizações, deixe **Receber versões beta** ligado durante o piloto.
 2. **Cadastre os cofres:** Synkro → **Cofres → Adicionar cofre**. Disco externo: marque **rodízio** e **Cifrar**; anote a chave de recuperação. NAS: **Pasta na rede**.
 3. **Cadastre os segredos:** senha do banco e do SMTP, token do Telegram (Configurações → Segredos ou `synkro-worker secret set <nome>`).
 4. **Crie as tarefas:** **Tarefas → Nova tarefa**, uma para os arquivos e uma para o banco. No banco, ligue o **teste de restauração** semanal (`restore_test`).

@@ -19,11 +19,22 @@ Compila em Release, copia o Qt e o runtime com o `windeployqt`, acrescenta os sc
 - `Synkro-<versão>-win64\` — a pasta do pacote, com `SHA256SUMS.txt`;
 - `Synkro-<versão>-win64.zip` e `.zip.sha256`.
 
-Com `-CertificateThumbprint`, os executáveis são assinados com o `signtool` (Windows SDK) e carimbo de tempo. **Sem certificado, o pacote sai sem assinatura** e o SmartScreen avisa na primeira execução. O instalador MSI assinado depende do WiX Toolset e de um certificado de assinatura de código; enquanto isso, o pacote é a pasta/zip com `install.ps1`.
+Com `-Installer`, gera também `Synkro-Setup-<versão>.exe` (Inno Setup 6) e o `.sha256`. Com `-VersionSuffix beta.1`, a versão vira `0.9.0-beta.1`.
+
+Com `-CertificateThumbprint`, os executáveis e o instalador são assinados com o `signtool` (Windows SDK) e carimbo de tempo. **Sem certificado, o pacote sai sem assinatura** e o SmartScreen avisa na primeira execução.
+
+As versões publicadas saem prontas na aba **Releases** do GitHub, geradas pelo GitHub Actions ([releases.md](releases.md)).
 
 ### 1.2. Instalar ou atualizar
 
-Na máquina, extraia o zip, confira o hash (`Get-FileHash Synkro-...zip` contra o `.zip.sha256`) e, num PowerShell **como administrador**:
+**Pelo instalador (recomendado):**
+1. Baixe `Synkro-Setup-<versão>.exe` da aba Releases.
+2. Execute (pede administrador). Sem assinatura digital, o SmartScreen avisa: *Mais informações → Executar assim mesmo*.
+3. O instalador extrai o pacote e roda o `install.ps1` descrito abaixo. O log fica em `C:\ProgramData\Synkro\logs\install-<versão>.log`.
+
+**Atualizações seguintes:** chegam pelo próprio app (**Configurações → Atualizações**, ou o aviso na bandeja). O app baixa o instalador, confere o SHA-256 e, com a sua confirmação, instala e se reabre.
+
+**Manual, pelo zip:** na máquina, extraia o zip, confira o hash (`Get-FileHash Synkro-...zip` contra o `.zip.sha256`) e, num PowerShell **como administrador**:
 
 ```powershell
 cd C:\caminho\Synkro-0.9.0-win64
