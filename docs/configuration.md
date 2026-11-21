@@ -216,7 +216,7 @@ notifications:
 
 ```json
 {
-  "source": "synkro", "version": "0.1.0", "instance": "PDV Matriz", "computer": "PDV01",
+  "source": "synkro", "version": "0.9.0", "instance": "PDV Matriz", "computer": "PDV01",
   "sent_at": "2026-11-20T11:00:00Z", "title": "[Synkro] PDV Matriz: 1 alerta crítico", "text": "...",
   "events": [
     { "kind": "alert", "code": "last_run_failed", "subject": "pdv-arquivos", "severity": "critical",

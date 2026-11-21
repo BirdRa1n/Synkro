@@ -762,7 +762,7 @@ Dashboard, cadastro de cofres (com as checagens), assistente de tarefas de arqui
 
 Scrub agendado com reparo entre cofres, saúde SMART, instalador MSI assinado, guia de operação, testes de estresse e de longa duração. Teste de restauração automático de dumps (`restore_test`); motores **Firebird** e **SQL Server**; exportar/importar configuração entre PDVs.
 
-**Saída:** piloto em PDVs reais.
+**Saída:** piloto em PDVs reais, conforme o [roteiro do piloto](pilot.md) (versão 0.9.0, com `synkro-worker doctor` para a checagem da instalação e `diag` para o suporte).
 
 ### Fase 5 — Evolução (em andamento)
 

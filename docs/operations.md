@@ -26,7 +26,7 @@ Com `-CertificateThumbprint`, os executáveis são assinados com o `signtool` (W
 Na máquina, extraia o zip, confira o hash (`Get-FileHash Synkro-...zip` contra o `.zip.sha256`) e, num PowerShell **como administrador**:
 
 ```powershell
-cd C:\caminho\Synkro-0.1.0-win64
+cd C:\caminho\Synkro-0.9.0-win64
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
@@ -107,6 +107,8 @@ Com `schedule_catch_up: true` (padrão), um horário perdido com o PC desligado 
 - **Painel:** situação de cada tarefa (último sucesso, próximo horário), dos cofres (conectado, espaço, saúde do disco) e os alertas.
 - **Visualizador de Eventos:** log *Aplicativo*, origem **Synkro** — alertas novos como Aviso/Erro e resolvidos como Informação. Útil para monitoramento remoto (encaminhamento de eventos, RMM).
 - **Linha de comando:** `synkro-worker status` (código de saída 2 se houver alerta crítico).
+- **Checagem da instalação:** `synkro-worker doctor`, como administrador. Confere configuração, segredos, tarefas do Agendador, cofres (conectados, espaço, saúde, chave dos cifrados), ferramentas de banco e notificações, e termina com PRONTO, PRONTO COM RESSALVAS ou NÃO PRONTO (código de saída 0, 1 ou 2).
+- **Diagnóstico para o suporte:** Configurações → **Gerar diagnóstico…** ou `synkro-worker diag --to arquivo.txt`. O relatório traz a checagem, os alertas, as execuções recentes, as notificações, as tarefas do Agendador e os arquivos de configuração. Não tem senhas, mas tem nomes de servidores, pastas e e-mails: envie só ao suporte.
 
 ### 5.1. Alertas
 

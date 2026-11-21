@@ -58,6 +58,7 @@ Backup incremental, versionado e redundante para dados críticos no Windows, com
 | [docs/database-backup.md](docs/database-backup.md) | Backup consistente de bancos de dados |
 | [docs/configuration.md](docs/configuration.md) | Configuração em YAML |
 | [docs/operations.md](docs/operations.md) | Guia de operação: instalação, permissões, alertas, restauração, troca de disco |
+| [docs/pilot.md](docs/pilot.md) | Roteiro do piloto em PDVs: critérios, instalação, falhas provocadas, acompanhamento e avaliação |
 | [config/examples/](config/examples) | YAMLs de exemplo (validados pelos testes) |
 
 ## Estrutura
@@ -135,6 +136,8 @@ synkro-worker backup --source C:\PDV --vault E:\ --job-id avulso   # sem configu
 synkro-worker status                               # tarefas, cofres e alertas (sai com 2 se houver crítico)
 synkro-worker maintenance --scrub                  # verificação dos cofres com reparo
 synkro-worker notify test                          # como administrador: testa e-mail/webhook/Telegram
+synkro-worker doctor                               # como administrador: este PDV está pronto?
+synkro-worker diag                                 # relatório para o suporte (sem senhas)
 synkro-worker notify list                          # o que foi avisado, tentativas e erros
 synkro-worker runs  --vault E:\ --job pdv-arquivos
 synkro-worker dumps --vault E:\ --job pdv-postgres
