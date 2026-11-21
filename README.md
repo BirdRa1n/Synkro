@@ -122,6 +122,8 @@ Requisitos: Windows 10 ou 11 de 64 bits e um segundo disco físico (ou uma pasta
 | | |
 |---|---|
 | Incremental com versões | `current/` espelha a origem; o que mudou ou foi excluído vai para `versions/<execução>/` |
+| Várias pastas por tarefa | `sources:` com a pasta principal na raiz do cofre e as demais em subpastas; tarefas antigas continuam iguais |
+| Horário por dia da semana | ex.: de segunda a sábado às 22:00 e domingo ao meio-dia, no assistente ou no modo fácil |
 | Snapshot VSS | copia arquivos abertos (banco local, logs em uso) de forma consistente |
 | Detecção de mudanças | tamanho e data, com releitura completa a cada N execuções (`full_hash_every`) |
 | Guardas | origem ausente ou vazia, exclusão e modificação em massa, arquivo-sentinela |

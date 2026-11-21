@@ -385,6 +385,26 @@ shutdown_after: false
 timeout: 6h
 ```
 
+### Várias pastas na mesma tarefa (`sources`)
+
+Troque `source` por `sources` para copiar mais de uma pasta com o mesmo agendamento, os mesmos cofres e as mesmas regras:
+
+```yaml
+sources:
+  - "C:/PDV"                                       # 1ª: a pasta principal, na raiz do cofre
+  - "D:/Fiscal/XML"                                # no cofre em XML\
+  - { path: "E:/Exportacao", name: exportacao-erp }  # no cofre em exportacao-erp\
+```
+
+- **Compatível com tarefas antigas:** `source: "C:/PDV"` continua valendo e é o mesmo que uma lista de um item. A 1ª pasta da lista fica na **raiz** do cofre, exatamente como numa tarefa de uma pasta só. Por isso, acrescentar pastas a uma tarefa que já tem backups não move nem recopia nada do que já está lá.
+- Cada pasta adicional fica numa **subpasta** do cofre com o nome da própria pasta, ou com `name:` quando você quiser outro nome (ou houver duas pastas com o mesmo nome). Esse nome é permanente: trocá-lo depois faz o Synkro tratar os arquivos como excluídos e copiados de novo, o que a guarda de exclusão em massa pode bloquear.
+- `include`, `exclude` e `guards` valem para todas as pastas, com caminhos relativos a cada uma. O `sentinel_file` usa o caminho como fica no cofre (ex.: `XML/controle.txt` para um arquivo da pasta `D:/Fiscal/XML`).
+- **Proteções:** se qualquer uma das pastas sumir, a execução falha sem tocar nos cofres. Se uma delas ficar vazia, mas tinha arquivos no último backup (pendrive ou compartilhamento que não montou), a execução é bloqueada, mesmo que as outras estejam normais. Se a pasta principal tiver um item com o nome de uma pasta adicional, a execução para e pede outro `name`.
+- O snapshot VSS é feito uma vez por volume e vale para todas as pastas daquele disco.
+- Pastas repetidas, uma dentro da outra ou com caminho relativo são recusadas na validação.
+- Restaurar a tarefa inteira devolve a mesma organização: a pasta principal na raiz do destino e cada pasta adicional na sua subpasta.
+- No app, o assistente (**Pastas de origem**) e o modo fácil (bloco da origem) mostram a lista, com **Adicionar pasta…** e a coluna **No cofre** para escolher o nome.
+
 ---
 
 ## 7. Tarefa de banco de dados (`type: database`)
@@ -621,6 +641,18 @@ schedule:
 
 Cada gatilho vira um gatilho da tarefa correspondente no Task Scheduler (`\Synkro\<id>`), com "executar assim que possível se perdido" conforme `schedule_catch_up`.
 
+**Horário diferente num dia da semana** (ex.: de segunda a sábado às 22:00, domingo ao meio-dia). Use um gatilho `weekly` para cada horário:
+
+```yaml
+schedule:
+  - weekly: { days: [mon, tue, wed, thu, fri, sat], at: "22:00" }
+  - weekly: { days: [sun], at: "12:00" }
+shutdown_after: true       # vale para todas as execuções: no domingo, desliga depois do backup do meio-dia
+```
+
+- No assistente (**Nova tarefa → Para onde e quando**), desmarque **Mesmo horário em todos os dias** e escolha o horário de cada dia; dias com o mesmo horário viram um só gatilho.
+- No modo fácil, selecione o gatilho e use **Horário diferente em um dia…**: o dia escolhido sai do gatilho e ganha um gatilho próprio, já ligado ao mesmo destino.
+
 ---
 
 ## 9. Referência de campos
@@ -647,7 +679,8 @@ Cada gatilho vira um gatilho da tarefa correspondente no Task Scheduler (`\Synkr
 
 | Campo | Padrão | Descrição |
 |---|---|---|
-| `source` | — (obrigatório) | Pasta de origem |
+| `source` | — (este ou `sources`) | Pasta de origem |
+| `sources` | — (este ou `source`) | Várias pastas; a 1ª na raiz do cofre, as demais em subpastas (`name` opcional) — §6 |
 | `include` / `exclude` | tudo / nada | Padrões estilo `.gitignore` |
 | `consistency.snapshot` | `vss` | Snapshot VSS do volume |
 | `consistency.on_snapshot_failure` | `continue` | |
