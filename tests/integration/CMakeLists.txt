@@ -10,6 +10,7 @@ synkro_add_test(tst_operations    tst_operations.cpp)
 synkro_add_test(tst_notify        tst_notify.cpp)
 target_link_libraries(tst_notify PRIVATE Qt6::Network)
 synkro_add_test(tst_netvault      tst_netvault.cpp)
+synkro_add_test(tst_crypto        tst_crypto.cpp)
 # Estresse (~100 mil arquivos): só roda com SYNKRO_STRESS=1; sem ela, é pulado.
 synkro_add_test(tst_stress        tst_stress.cpp)
 set_tests_properties(tst_stress PROPERTIES TIMEOUT 7200 ENVIRONMENT "QTEST_FUNCTION_TIMEOUT=7200000")

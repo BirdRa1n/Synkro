@@ -1,4 +1,5 @@
 #include "config/ConfigLoader.h"
+#include "crypto/VaultKey.h"
 #include "database/DatabaseBackup.h"
 #include "database/DatabaseRestore.h"
 #include "database/Drivers.h"
@@ -329,6 +330,48 @@ private slots:
         auto r = runDatabaseBackup(env.request(j));
         QCOMPARE(r.status, RunStatus::Success);
         QVERIFY(!r.warnings.empty() && r.warnings.front().find("MyISAM") != std::string::npos);
+    }
+
+    void sqliteIntoEncryptedVault()
+    {
+        Env env;
+        crypto::forgetRememberedKeys();
+        QVERIFY(crypto::enableEncryption(env.vaultA, env.secrets));
+        crypto::forgetRememberedKeys(); // o backup usa a chave guardada (secrets.dat do teste)
+        const std::wstring dbFile = win::joinPath(env.root, L"pdv\\caixa.db");
+        QVERIFY(win::createDirectories(win::parentPath(dbFile)).ok());
+        {
+            auto db = SqliteDb::open(dbFile, SqliteDb::Mode::ReadWriteCreate);
+            QVERIFY(db.ok());
+            QVERIFY(db.value().exec("CREATE TABLE clientes(cpf TEXT); INSERT INTO clientes VALUES ('111.222.333-44');").ok());
+        }
+        std::string yml = "version: 1\nid: lite\nname: lite\ntype: database\nengine: sqlite\nsqlite:\n  files: [\""
+                          + win::toUtf8(dbFile) + "\"]\n";
+        for (auto& ch : yml)
+            if (ch == '\\')
+                ch = '/';
+        auto r = runDatabaseBackup(env.request(env.job(yml)));
+        QVERIFY2(r.status == RunStatus::Success, describe(r).constData());
+
+        const vault::JobLayout L(env.vaultA, L"lite");
+        const auto dumps = listDumps(L, "caixa");
+        QCOMPARE(dumps.size(), size_t(1));
+        const std::wstring stored = win::joinPath(L.root(), win::fromCatalogPath(dumps.front().relativePath));
+        QVERIFY(crypto::looksEncrypted(stored));
+        QVERIFY(!readFile(stored).contains("111.222.333-44"));
+
+        DatabaseRestoreRequest rr;
+        rr.vaultLocation = env.vaultA;
+        rr.jobId = L"lite";
+        rr.database = "caixa";
+        rr.targetPath = win::joinPath(env.root, L"restaurado.db");
+        rr.stagingRoot = env.staging;
+        rr.secretsFile = env.secrets;
+        auto restored = restoreDatabase(rr);
+        QVERIFY2(restored.ok(), restored.ok() ? "" : restored.error().message.c_str());
+        auto db = SqliteDb::open(rr.targetPath, SqliteDb::Mode::ReadOnly);
+        QVERIFY(db.ok());
+        QCOMPARE(listTables(db.value()), std::vector<std::string>{"clientes"});
     }
 
     void sqliteBackupAndRestore()
