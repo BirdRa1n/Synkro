@@ -14,6 +14,8 @@ add_library(synkro_core STATIC
     config/ConfigLoader.cpp
     config/ConfigWriter.h
     config/ConfigWriter.cpp
+    config/FlowGraph.h
+    config/FlowGraph.cpp
     config/VaultAccess.h
     config/VaultAccess.cpp
     config/VaultRemoval.h
