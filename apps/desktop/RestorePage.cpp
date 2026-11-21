@@ -257,6 +257,9 @@ void RestorePage::restore()
     const std::wstring location = m_vault->currentData().toString().toStdWString();
     const std::wstring jobId = m_job->currentData().toString().toStdWString();
     const std::wstring runId = item->data(Qt::UserRole).toString().toStdWString();
+    // Cofre cifrado sem a chave nesta máquina (ex.: computador novo).
+    if (!unlockVaultIfNeeded(this, location))
+        return;
 
     auto* watcher = new QFutureWatcher<QString>(this);
     if (!m_isDatabase) {

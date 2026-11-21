@@ -12,6 +12,7 @@
 #include "config/PlanDescriber.h"
 #include "core/Paths.h"
 #include "core/RunId.h"
+#include "crypto/VaultKey.h"
 #include "database/Drivers.h"
 #include "database/Tools.h"
 #include "platform/windows/NetworkShare.h"
@@ -23,11 +24,14 @@
 
 #include <QApplication>
 #include <QCheckBox>
+#include <QClipboard>
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QFileDialog>
+#include <QFile>
 #include <QFormLayout>
 #include <QFutureWatcher>
+#include <QInputDialog>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLineEdit>
@@ -182,6 +186,11 @@ AddVaultDialog::AddVaultDialog(QWidget* parent, bool network) : QDialog(parent)
     m_rotation = new QCheckBox(QStringLiteral("Disco de rodízio (sai do local; a ausência é esperada por alguns dias)"));
     form->addRow(formLabel(QStringLiteral("Nome do cofre")), m_label);
     form->addRow(formLabel(QString()), m_rotation);
+    m_encrypt = new QCheckBox(QStringLiteral("Cifrar o cofre (AES-256)"));
+    m_encrypt->setToolTip(QStringLiteral("Recomendado para discos que saem da loja e para NAS. O conteúdo dos arquivos e dos "
+                                         "dumps fica ilegível sem a chave; você recebe uma chave de recuperação para guardar "
+                                         "fora do PDV. Só vale para cofres novos, sem backups."));
+    form->addRow(formLabel(QString()), m_encrypt);
     v->addLayout(form);
 
     auto* check = ui::button(QStringLiteral("Verificar"), QStringLiteral("check"));
@@ -369,6 +378,20 @@ void AddVaultDialog::initialize()
         vaultId = created.value().vaultId;
     }
 
+    // Cifragem: só num cofre ainda sem backups. A chave de recuperação é
+    // mostrada uma vez, antes de qualquer outra coisa.
+    if (m_encrypt->isChecked() && !synkro::crypto::isEncrypted(m_mountPoint)) {
+        auto enabled = synkro::crypto::enableEncryption(m_mountPoint);
+        if (!enabled) {
+            QMessageBox::warning(this, windowTitle(),
+                                 QStringLiteral("O cofre não pôde ser cifrado: %1").arg(fmt::q(enabled.error().message)));
+            return;
+        }
+        RecoveryKeyDialog keyDialog(name, fmt::q(enabled.value().recoveryKey), enabled.value().storedOnMachine,
+                                    fmt::q(enabled.value().storeError), this);
+        keyDialog.exec();
+    }
+
     auto& ctx = AppContext::instance();
     synkro::config::GlobalConfig g = ctx.config().global;
     std::string base = slugify(name);
@@ -435,6 +458,130 @@ void AddVaultDialog::initialize()
         editor.exec();
     }
     accept();
+}
+
+// ============================================================================
+// RecoveryKeyDialog / unlockVaultIfNeeded
+// ============================================================================
+
+RecoveryKeyDialog::RecoveryKeyDialog(const QString& vaultLabel, const QString& recoveryKey, bool storedOnMachine,
+                                     const QString& storeError, QWidget* parent)
+    : QDialog(parent)
+{
+    setWindowTitle(QStringLiteral("Chave de recuperação"));
+    resize(640, 420);
+    auto* v = new QVBoxLayout(this);
+    v->setContentsMargins(24, 22, 24, 22);
+    v->setSpacing(12);
+    v->addWidget(title(QStringLiteral("Guarde a chave de recuperação")));
+    auto* intro = label(QStringLiteral("O cofre \"%1\" está cifrado. Esta chave é a ÚNICA forma de restaurar os backups em "
+                                       "outro computador — por exemplo, se este PDV for perdido. Ela não é exibida de novo "
+                                       "nem fica gravada no cofre.")
+                            .arg(vaultLabel),
+                        "muted");
+    intro->setWordWrap(true);
+    v->addWidget(intro);
+
+    auto* keyLabel = new QLabel(recoveryKey);
+    keyLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    keyLabel->setAlignment(Qt::AlignCenter);
+    QFont mono(QStringLiteral("Consolas"));
+    mono.setStyleHint(QFont::Monospace);
+    mono.setPointSize(16);
+    mono.setBold(true);
+    keyLabel->setFont(mono);
+    auto* box = card("insetBox");
+    auto* bl = new QVBoxLayout(box);
+    bl->setContentsMargins(16, 18, 16, 18);
+    bl->addWidget(keyLabel);
+    v->addWidget(box);
+
+    auto* tools = new QHBoxLayout;
+    auto* copy = ui::button(QStringLiteral("Copiar"), QStringLiteral("copy"));
+    connect(copy, &QPushButton::clicked, this, [recoveryKey] { QApplication::clipboard()->setText(recoveryKey); });
+    auto* save = ui::button(QStringLiteral("Salvar em arquivo…"), QStringLiteral("folder"));
+    connect(save, &QPushButton::clicked, this, [this, recoveryKey, vaultLabel] {
+        const QString file = QFileDialog::getSaveFileName(this, QStringLiteral("Salvar a chave (use um pendrive, não este PC)"),
+                                                          QStringLiteral("chave-recuperacao-synkro.txt"),
+                                                          QStringLiteral("Texto (*.txt)"));
+        if (file.isEmpty())
+            return;
+        QFile f(file);
+        if (f.open(QIODevice::WriteOnly | QIODevice::Text))
+            f.write(QStringLiteral("Synkro — chave de recuperação do cofre \"%1\"\n\n%2\n").arg(vaultLabel, recoveryKey).toUtf8());
+    });
+    tools->addWidget(copy);
+    tools->addWidget(save);
+    tools->addStretch(1);
+    v->addLayout(tools);
+
+    auto* where = label(storedOnMachine
+                            ? QStringLiteral("Nesta máquina a chave fica guardada (DPAPI): os backups agendados funcionam sem "
+                                             "pedir nada. Imprima ou anote a chave e guarde-a fora do PDV.")
+                            : QStringLiteral("Atenção: a chave NÃO ficou guardada nesta máquina (%1). Abra o Synkro como "
+                                             "administrador e use \"synkro-worker vault unlock\" antes do próximo backup.")
+                                  .arg(storeError),
+                        "muted");
+    where->setWordWrap(true);
+    v->addWidget(where);
+    v->addStretch(1);
+
+    auto* confirm = new QCheckBox(QStringLiteral("Anotei a chave em lugar seguro, fora deste computador"));
+    v->addWidget(confirm);
+    auto* buttons = new QHBoxLayout;
+    buttons->addStretch(1);
+    auto* done = ui::button(QStringLiteral("Concluir"), QStringLiteral("check"), true);
+    done->setEnabled(false);
+    connect(confirm, &QCheckBox::toggled, done, &QPushButton::setEnabled);
+    connect(done, &QPushButton::clicked, this, [this] { QDialog::accept(); });
+    buttons->addWidget(done);
+    v->addLayout(buttons);
+    setProperty("confirmBox", QVariant::fromValue<QObject*>(confirm));
+}
+
+void RecoveryKeyDialog::reject()
+{
+    auto* confirm = qobject_cast<QCheckBox*>(property("confirmBox").value<QObject*>());
+    if (confirm && confirm->isChecked()) {
+        QDialog::reject();
+        return;
+    }
+    QMessageBox::information(this, windowTitle(),
+                             QStringLiteral("Anote a chave de recuperação e marque a confirmação antes de fechar."));
+}
+
+bool unlockVaultIfNeeded(QWidget* parent, const std::wstring& location)
+{
+    if (!synkro::crypto::isEncrypted(location))
+        return true;
+    auto cipher = synkro::crypto::cipherFor(location);
+    if (cipher)
+        return true;
+    if (cipher.error().code != synkro::ErrorCode::KeyRequired) {
+        QMessageBox::warning(parent, QStringLiteral("Cofre cifrado"), fmt::q(cipher.error().message));
+        return false;
+    }
+    QString hint = QStringLiteral("Este cofre é cifrado e a chave não está guardada nesta máquina.\n"
+                                  "Digite a chave de recuperação (8 grupos de 4, ex.: ABCD-EFGH-…):");
+    for (;;) {
+        bool ok = false;
+        const QString text = QInputDialog::getText(parent, QStringLiteral("Cofre cifrado"), hint, QLineEdit::Normal,
+                                                   QString(), &ok);
+        if (!ok || text.trimmed().isEmpty())
+            return false;
+        std::string typed = text.toStdString();
+        QApplication::setOverrideCursor(Qt::WaitCursor);
+        auto key = synkro::crypto::unlockWithRecoveryKey(location, typed);
+        QApplication::restoreOverrideCursor();
+        synkro::wipe(typed);
+        if (key) {
+            auto id = synkro::vault::readIdentity(location);
+            synkro::crypto::rememberKey(id.value().vaultId, key.value());
+            synkro::crypto::wipe(key.value());
+            return true;
+        }
+        hint = fmt::q(key.error().message) + QStringLiteral(". Tente de novo:");
+    }
 }
 
 // ============================================================================

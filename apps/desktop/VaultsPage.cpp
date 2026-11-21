@@ -6,6 +6,7 @@
 #include "Theme.h"
 
 #include "config/Values.h"
+#include "crypto/VaultKey.h"
 #include "engine/Verify.h"
 #include "platform/windows/Volume.h"
 #include "platform/windows/Win32.h"
@@ -144,6 +145,8 @@ void VaultsPage::refresh()
                         + (vol.kind == synkro::win::DriveKind::Removable ? QStringLiteral("removível") : QStringLiteral("fixo"));
             }
         }
+        if (obs.connected && synkro::crypto::isEncrypted(obs.location))
+            model += QStringLiteral(" · cifrado (AES-256)");
         names->addWidget(label(model, "muted"));
         head->addLayout(names, 1);
         v->addLayout(head);
@@ -204,6 +207,8 @@ void VaultsPage::refresh()
         const std::wstring location = obs.location;
         const std::string vaultCfgId = obs.id;
         connect(verify, &QPushButton::clicked, this, [this, location, vaultCfgId] {
+            if (!unlockVaultIfNeeded(this, location))
+                return;
             QString report;
             bool healthy = true;
             for (const auto& j : AppContext::instance().config().jobs) {

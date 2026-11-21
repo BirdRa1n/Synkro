@@ -47,6 +47,7 @@ private:
     QComboBox* m_drive;
     QLineEdit* m_label;
     QCheckBox* m_rotation;
+    QCheckBox* m_encrypt;
     QCheckBox* m_acceptWarnings;
     QVBoxLayout* m_findings;
     class QPushButton* m_initButton;
@@ -55,6 +56,21 @@ private:
     std::wstring m_mountPoint;
     std::wstring m_checkedPath; // caminho examinado na última verificação
 };
+
+// Mostra a chave de recuperação de um cofre recém-cifrado, uma única vez.
+// Só fecha depois que o usuário confirma que guardou a chave.
+class RecoveryKeyDialog : public QDialog {
+    Q_OBJECT
+public:
+    RecoveryKeyDialog(const QString& vaultLabel, const QString& recoveryKey, bool storedOnMachine,
+                      const QString& storeError, QWidget* parent = nullptr);
+    void reject() override; // Esc/fechar também exigem a confirmação
+};
+
+// Cofre cifrado sem a chave nesta máquina: pede a chave de recuperação e a
+// guarda só na memória deste processo. false se o usuário desistir ou a chave
+// não servir.
+bool unlockVaultIfNeeded(QWidget* parent, const std::wstring& vaultLocation);
 
 // Abrir um cofre numa pasta de rede para restaurar (inclusive de um
 // computador novo, sem configuração): caminho, usuário e senha.

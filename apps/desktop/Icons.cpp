@@ -34,6 +34,8 @@ const QHash<QString, QString>& paths()
         {"edit", "M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"},
         {"key", "M21 2l-2 2m-7.6 7.6a5.5 5.5 0 1 1-7.8 7.8 5.5 5.5 0 0 1 7.8-7.8zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"},
         {"external", "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"},
+        {"copy", "M9 9h11v11H9zM5 15H4V4h11v1"},
+        {"lock", "M5 11h14v10H5zM8 11V7a4 4 0 0 1 8 0v4"},
     };
     return p;
 }

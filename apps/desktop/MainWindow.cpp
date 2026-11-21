@@ -341,6 +341,12 @@ void MainWindow::saveScreenshots(const QString& dir)
         }
     }
     {
+        // Chave de exemplo (não é de nenhum cofre).
+        RecoveryKeyDialog key(QStringLiteral("HD Externo 1"), QStringLiteral("4TX2-WMS6-WP7P-NLLF-LAA3-YB77-3LNW-GDQB"), true,
+                              QString(), this);
+        shoot(&key, QStringLiteral("12-chave-recuperacao.png"));
+    }
+    {
         ImportConfigDialog import(this);
         shoot(&import, QStringLiteral("10-importar-config.png"));
     }
