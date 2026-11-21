@@ -10,6 +10,7 @@
 #include "core/Paths.h"
 #include "core/Version.h"
 #include "platform/windows/Snapshot.h"
+#include "platform/windows/TaskScheduler.h"
 #include "platform/windows/Win32.h"
 #include "secrets/SecretStore.h"
 
@@ -28,38 +29,26 @@
 #include <QMessageBox>
 #include <QProgressBar>
 #include <QRadioButton>
+#include <QSignalBlocker>
 #include <QSettings>
 #include <QUrl>
 
 using namespace ui;
 
-namespace {
-
-const QString kRunKeyUser = QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run");
-const QString kRunKeyMachine = QStringLiteral("HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\Run");
-const QString kRunValue = QStringLiteral("Synkro");
-
-} // namespace
-
-bool autostartForAllUsers()
+bool autostartEnabled()
 {
-    return QSettings(kRunKeyMachine, QSettings::NativeFormat).contains(kRunValue);
+    return synkro::win::taskExists(synkro::win::kDesktopTaskName);
 }
 
-bool autostartForCurrentUser()
+QString setAutostart(bool on)
 {
-    return QSettings(kRunKeyUser, QSettings::NativeFormat).contains(kRunValue);
-}
-
-bool setAutostartForCurrentUser(bool on)
-{
-    QSettings run(kRunKeyUser, QSettings::NativeFormat);
-    if (on)
-        run.setValue(kRunValue, QStringLiteral("\"%1\" --tray").arg(QDir::toNativeSeparators(QCoreApplication::applicationFilePath())));
-    else
-        run.remove(kRunValue);
-    run.sync();
-    return run.status() == QSettings::NoError;
+    // Versões anteriores usavam a chave Run do usuário: some com ela.
+    QSettings(QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"), QSettings::NativeFormat)
+        .remove(QStringLiteral("Synkro"));
+    const auto st = on ? synkro::win::registerTask(synkro::win::desktopAutostartTask(
+                             QDir::toNativeSeparators(QCoreApplication::applicationFilePath()).toStdWString()))
+                       : synkro::win::deleteTask(synkro::win::kDesktopTaskName);
+    return st ? QString() : fmt::q(st.error().message);
 }
 
 SettingsPage::SettingsPage() : Page(QStringLiteral("Configurações"), QStringLiteral("Aparência, segredos e configuração do Synkro"))
@@ -190,22 +179,24 @@ void SettingsPage::refresh()
     row->addStretch(1);
     lv->addLayout(row);
 
-    // Início automático na bandeja (por usuário; o instalador pode ligar para todos).
+    // Início automático na bandeja (tarefa do Agendador, como administrador).
     lv->addSpacing(6);
     lv->addWidget(label(QStringLiteral("Inicialização"), "fact"));
     auto* autostart = new QCheckBox(QStringLiteral("Abrir o Synkro na bandeja ao entrar no Windows"));
-    const bool forAll = autostartForAllUsers();
-    autostart->setChecked(forAll || autostartForCurrentUser());
-    autostart->setEnabled(!forAll);
-    connect(autostart, &QCheckBox::toggled, this, [this](bool on) {
-        if (!setAutostartForCurrentUser(on))
+    autostart->setChecked(autostartEnabled());
+    connect(autostart, &QCheckBox::toggled, this, [this, autostart](bool on) {
+        const QString error = setAutostart(on);
+        if (!error.isEmpty()) {
             QMessageBox::warning(this, QStringLiteral("Inicialização"),
-                                 QStringLiteral("Não foi possível alterar a inicialização automática."));
+                                 QStringLiteral("Não foi possível alterar a inicialização automática: %1").arg(error));
+            const QSignalBlocker block(autostart);
+            autostart->setChecked(autostartEnabled());
+        }
     });
     lv->addWidget(autostart);
-    lv->addWidget(label(forAll ? QStringLiteral("Ligado para todos os usuários pelo instalador.")
-                               : QStringLiteral("Os alertas (backup atrasado, cofre ausente, falhas) aparecem na bandeja "
-                                                "mesmo com a janela fechada."),
+    lv->addWidget(label(QStringLiteral("Vale para todos os administradores desta máquina; o Synkro abre já como "
+                                       "administrador, sem pedido de permissão. Os alertas aparecem na bandeja mesmo "
+                                       "com a janela fechada."),
                         "muted"));
     body()->addWidget(look);
 

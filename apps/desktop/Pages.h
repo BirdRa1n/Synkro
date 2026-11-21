@@ -81,9 +81,11 @@ private:
 };
 
 // Início automático na bandeja ("synkro-desktop --tray") pela chave Run do Windows.
-bool autostartForAllUsers();     // HKLM, gravado pelo instalador
-bool autostartForCurrentUser();  // HKCU
-bool setAutostartForCurrentUser(bool on);
+// Início automático na bandeja: tarefa \Synkro\Desktop do Agendador (ao fazer
+// logon, como administrador). A chave Run não serve: o Windows não inicia por
+// ela um programa que exige administrador.
+bool autostartEnabled();
+QString setAutostart(bool on); // erro em pt-BR; vazio = ok
 
 class SettingsPage : public ui::Page {
     Q_OBJECT

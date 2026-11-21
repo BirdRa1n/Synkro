@@ -9,7 +9,8 @@
     - copia os programas para Program Files;
     - cria C:\ProgramData\Synkro com as permissões de docs/operations.md;
     - registra a origem "Synkro" no Visualizador de Eventos;
-    - liga o início automático do desktop na bandeja (todos os usuários);
+    - liga o início automático do desktop na bandeja, como administrador
+      (tarefa \Synkro\Desktop do Agendador, ao fazer logon);
     - registra em "Programas e Recursos" e no menu Iniciar;
     - se já houver configuração, aplica (tarefas no Agendador).
 
@@ -151,15 +152,24 @@ Invoke-Step 'registrar a origem "Synkro" no Visualizador de Eventos (log Aplicat
 }
 
 # ---- 6. Início automático e atalhos ------------------------------------------------
-$runKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run'
 $desktopExe = Join-Path $InstallDir 'synkro-desktop.exe'
+$workerExe = Join-Path $InstallDir 'synkro-worker.exe'
+# O desktop exige administrador, e o Windows não inicia programas assim pela
+# chave Run: o início automático é a tarefa \Synkro\Desktop (logon, elevada).
+Invoke-Step 'remover o início automático antigo (chave Run)' {
+    foreach ($key in 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run', 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run') {
+        Remove-ItemProperty -Path $key -Name 'Synkro' -ErrorAction SilentlyContinue
+    }
+}
 if ($NoAutostart) {
     Invoke-Step 'desligar o início automático na bandeja' {
-        Remove-ItemProperty -Path $runKey -Name 'Synkro' -ErrorAction SilentlyContinue
+        & $workerExe autostart off | Out-Null
+        $global:LASTEXITCODE = 0
     }
 } else {
-    Invoke-Step 'ligar o início automático na bandeja (todos os usuários)' {
-        Set-ItemProperty -Path $runKey -Name 'Synkro' -Value "`"$desktopExe`" --tray"
+    Invoke-Step 'ligar o início automático na bandeja, como administrador (tarefa \Synkro\Desktop)' {
+        & $workerExe autostart on | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "não foi possível criar a tarefa de início automático ($LASTEXITCODE)" }
     }
 }
 Invoke-Step 'criar o atalho no menu Iniciar' {

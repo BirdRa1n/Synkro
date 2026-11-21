@@ -8,7 +8,7 @@
 ;
 ; Silencioso, usado pelo atualizador do app:
 ;   Synkro-Setup-<versão>.exe /SILENT /SUPPRESSMSGBOXES /NORESTART /SP-
-; No fim reabre o Synkro Desktop como o usuário que pediu a atualização.
+; No fim reabre o Synkro Desktop (como administrador, como ele sempre roda).
 
 #ifndef AppVersion
   #error "Informe /DAppVersion=0.9.0-beta.1"
@@ -65,7 +65,8 @@ Source: "{#PackageDir}\*"; DestDir: "{tmp}\pacote"; Excludes: "install.ps1"; Fla
 Source: "{#PackageDir}\install.ps1"; DestDir: "{tmp}\pacote"; Flags: ignoreversion; AfterInstall: RunInstallScript
 
 [Run]
-Filename: "{autopf}\Synkro\synkro-desktop.exe"; Description: "Abrir o Synkro"; Flags: nowait postinstall runasoriginaluser
+; Sem runasoriginaluser: o desktop exige administrador, e o instalador já está elevado.
+Filename: "{autopf}\Synkro\synkro-desktop.exe"; Description: "Abrir o Synkro"; Flags: nowait postinstall
 
 [Code]
 procedure RunInstallScript;
