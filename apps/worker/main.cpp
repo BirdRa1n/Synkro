@@ -13,9 +13,12 @@
 #include "engine/RunSummary.h"
 #include "engine/Verify.h"
 #include "hash/Sha256.h"
+#include "core/Paths.h"
+#include "platform/windows/NetworkShare.h"
 #include "platform/windows/Volume.h"
 #include "platform/windows/Win32.h"
 #include "scan/FileScanner.h"
+#include "secrets/SecretStore.h"
 #include "transfer/SafeCopy.h"
 #include "vault/Vault.h"
 #include "vault/VaultCandidateCheck.h"
@@ -282,10 +285,27 @@ void addCandidateOptions(QCommandLineParser& p)
     p.addOption({QStringLiteral("vault"), QStringLiteral("Outro cofre da mesma tarefa."), QStringLiteral("disco")});
     p.addOption({QStringLiteral("label"), QStringLiteral("Nome do cofre."), QStringLiteral("nome")});
     p.addOption({QStringLiteral("folder"), QStringLiteral("Cria o cofre na própria pasta informada, e não na raiz do disco (testes).")});
+    p.addOption({QStringLiteral("user"), QStringLiteral("Cofre em rede: usuário do compartilhamento."), QStringLiteral("usuário")});
+    p.addOption({QStringLiteral("password-secret"), QStringLiteral("Cofre em rede: segredo com a senha (secret set)."),
+                 QStringLiteral("nome")});
 }
 
 synkro::vault::CandidateReport runCheck(const QCommandLineParser& p, const QString& disk)
 {
+    // Cofre em rede com credencial própria: conecta antes de examinar.
+    if (synkro::win::isUncPath(nativeArg(disk)) && p.isSet(QStringLiteral("user"))) {
+        std::string password;
+        if (p.isSet(QStringLiteral("password-secret"))) {
+            auto v = synkro::SecretStore(synkro::secretsFile()).get(p.value(QStringLiteral("password-secret")).toStdString());
+            if (!v)
+                err() << "aviso: segredo indisponível (" << q(v.error().message) << ")" << Qt::endl;
+            else
+                password = std::move(v).value();
+        }
+        if (auto st = synkro::win::connectShare(nativeArg(disk), p.value(QStringLiteral("user")).toStdWString(), password); !st)
+            err() << "aviso: não foi possível conectar ao compartilhamento: " << q(st.error().message) << Qt::endl;
+        synkro::wipe(password);
+    }
     synkro::vault::CandidateRequest req;
     req.candidatePath = nativeArg(disk);
     if (p.isSet(QStringLiteral("folder")))
@@ -305,9 +325,13 @@ void printReport(const synkro::vault::CandidateReport& report)
         QStringList disks;
         for (auto d : v.physicalDisks)
             disks << QString::number(d);
+        const bool network = v.kind == synkro::win::DriveKind::Network;
         out() << "volume:  " << q(v.mountPoint) << "  " << q(v.label) << "\n"
-              << "tipo:    " << synkro::win::nameOf(v.kind) << " · " << q(v.fileSystem) << " · disco físico "
-              << (disks.isEmpty() ? QStringLiteral("?") : disks.join(QLatin1Char(','))) << "\n"
+              << "tipo:    " << synkro::win::nameOf(v.kind) << " · " << q(v.fileSystem)
+              << (network ? QStringLiteral(" · compartilhamento de rede")
+                          : QStringLiteral(" · disco físico ")
+                                + (disks.isEmpty() ? QStringLiteral("?") : disks.join(QLatin1Char(','))))
+              << "\n"
               << "espaço:  " << humanBytes(v.freeBytes) << " livres de " << humanBytes(v.totalBytes) << "\n\n";
     }
     for (const auto& f : report.findings) {
@@ -349,7 +373,10 @@ int cmdVault(const QStringList& args)
         printReport(report);
         if (!report.accepted())
             return ExitBlocked;
-        const std::wstring location = p.isSet(QStringLiteral("folder")) ? nativeArg(disk) : report.volume.mountPoint;
+        const std::wstring native = nativeArg(disk);
+        const std::wstring location = p.isSet(QStringLiteral("folder")) || synkro::win::isUncPath(native)
+                                          ? synkro::win::normalizeUnc(native)
+                                          : report.volume.mountPoint;
         if (auto existing = synkro::vault::readIdentity(location)) {
             out() << "\ncofre já existente reaproveitado: " << existing.value().vaultId << Qt::endl;
             return ExitOk;

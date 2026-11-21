@@ -239,7 +239,11 @@ int cmdStatus(const QStringList& args)
                 out() << "\n  " << QString().leftJustified(30) << "saúde: " << q(v.healthText);
         } else {
             const auto seen = state->vaultSeen(v.vaultId);
-            out() << "desconectado" << (seen && seen->lastSeenAt.isValid()
+            if (v.network)
+                out() << "inacessível (" << q(v.unavailableReason) << ")";
+            else
+                out() << "desconectado";
+            out() << (seen && seen->lastSeenAt.isValid()
                                             ? QStringLiteral(" · visto em ") + seen->lastSeenAt.toLocalTime().toString(QStringLiteral("dd/MM HH:mm"))
                                             : QString());
         }

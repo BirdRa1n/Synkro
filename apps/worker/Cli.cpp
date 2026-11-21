@@ -45,6 +45,7 @@ void usage()
           << "Cofres\n"
           << "  vault check <disco> [--source P]... [--vault V]...  verifica se o disco pode ser um cofre\n"
           << "  vault init <disco> --label <nome> [--source P]...   verifica e inicializa o cofre\n"
+          << "       <disco> pode ser \\\\servidor\\pasta (cofre em rede; --user U --password-secret NOME)\n"
           << "  vault show <disco>                                   mostra a identidade do cofre\n"
           << "\nConfiguração\n"
           << "  config validate | plan [--job ID] | apply [--no-tasks]   [--config-dir D]\n"
