@@ -2,6 +2,11 @@
 
 include(FetchContent)
 
+# O CMake 4 recusa projetos com cmake_minimum_required abaixo de 3.5, como o
+# yaml-cpp 0.8.0 (3.4). Vale só para as dependências; versões anteriores do
+# CMake ignoram esta variável.
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+
 # yaml-cpp — leitura da configuração em YAML (docs/configuration.md).
 set(YAML_CPP_BUILD_TESTS   OFF CACHE BOOL "" FORCE)
 set(YAML_CPP_BUILD_TOOLS   OFF CACHE BOOL "" FORCE)
