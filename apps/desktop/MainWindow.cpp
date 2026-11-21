@@ -311,6 +311,14 @@ void MainWindow::saveScreenshots(const QString& dir)
         AddVaultDialog add(this);
         shoot(&add, QStringLiteral("9-adicionar-disco.png"));
     }
+    if (const QString textFile = qEnvironmentVariable("SYNKRO_SCREENSHOT_EDITOR_TEXT"); !textFile.isEmpty()) {
+        // Desenvolvimento: editor do synkro.yml com um texto proposto (ex.: reproduzir um caso de suporte).
+        QFile f(textFile);
+        if (f.open(QIODevice::ReadOnly)) {
+            YamlEditorDialog editor(L"synkro.yml", this, QString::fromUtf8(f.readAll()));
+            shoot(&editor, QStringLiteral("8-editor-yaml-texto.png"));
+        }
+    }
     {
         // "Revisar no editor YAML" depois de adicionar um cofre (exemplo).
         synkro::config::VaultConfig sample;

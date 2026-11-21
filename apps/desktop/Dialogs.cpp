@@ -54,6 +54,7 @@
 #include <QtConcurrent>
 
 #include <functional>
+#include <set>
 
 using namespace ui;
 
@@ -1254,6 +1255,7 @@ YamlEditorDialog::YamlEditorDialog(const std::wstring& relativePath, QWidget* pa
     sv->addWidget(label(QStringLiteral("PROBLEMAS"), "caption"));
     m_diagnostics = new QListWidget;
     m_diagnostics->setMaximumHeight(160);
+    m_diagnostics->setWordWrap(true); // mensagens longas (ex.: erro de uma tarefa) sem cortar
     connect(m_diagnostics, &QListWidget::itemClicked, this, [this](QListWidgetItem* item) {
         const int line = item->data(Qt::UserRole).toInt();
         if (line <= 0)
@@ -1301,6 +1303,31 @@ void YamlEditorDialog::validate()
         plan = QStringLiteral("%1 cofre(s) declarado(s).\n").arg(g.vaults.size());
         for (const auto& v : g.vaults)
             plan += QStringLiteral("  • %1 (%2)%3\n").arg(fmt::q(v.label), fmt::q(v.id), v.rotation ? QStringLiteral(" · rodízio") : QString());
+
+        // As tarefas dependem do synkro.yml (cofres, padrões): confere cada uma
+        // contra o texto editado. Erro que não existia com o arquivo atual (ex.:
+        // cofre tirado que uma tarefa ainda usa) bloqueia o Salvar.
+        auto& ctx = AppContext::instance();
+        for (const auto& job : set.jobs) {
+            const std::string jobText = ctx.readConfigFile(job.file);
+            if (jobText.empty())
+                continue;
+            std::vector<synkro::config::Diagnostic> before, after;
+            (void)synkro::config::parseJobDocument(jobText, job.file, set.global, before);
+            (void)synkro::config::parseJobDocument(jobText, job.file, g, after);
+            std::set<std::string> known;
+            for (const auto& d : before)
+                if (d.severity == synkro::config::Severity::Error)
+                    known.insert(synkro::config::formatDiagnostic(d));
+            for (auto d : after) {
+                if (d.severity != synkro::config::Severity::Error || known.count(synkro::config::formatDiagnostic(d)))
+                    continue;
+                d.line = 0; // a linha é do arquivo da tarefa, não deste
+                d.message += " — a tarefa \"" + job.name + "\" ainda depende disso: ajuste a tarefa antes (ou desfaça "
+                             "esta alteração)";
+                diags.push_back(d);
+            }
+        }
     } else {
         const auto job = synkro::config::parseJobDocument(text, m_path, set.global, diags);
         set.jobs.erase(std::remove_if(set.jobs.begin(), set.jobs.end(), [&](const auto& j) { return j.id == job.id; }), set.jobs.end());
