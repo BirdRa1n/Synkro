@@ -36,6 +36,7 @@
 #include <QHBoxLayout>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMimeData>
 #include <QMessageBox>
 #include <QFileInfo>
 #include <QPlainTextEdit>
@@ -498,7 +499,18 @@ RecoveryKeyDialog::RecoveryKeyDialog(const QString& vaultLabel, const QString& r
 
     auto* tools = new QHBoxLayout;
     auto* copy = ui::button(QStringLiteral("Copiar"), QStringLiteral("copy"));
-    connect(copy, &QPushButton::clicked, this, [recoveryKey] { QApplication::clipboard()->setText(recoveryKey); });
+    connect(copy, &QPushButton::clicked, this, [recoveryKey] {
+        // Fora do histórico (Win+V), da sincronização com a nuvem e de
+        // monitores de área de transferência: formatos registrados do Windows.
+        auto* mime = new QMimeData;
+        mime->setText(recoveryKey);
+        const QByteArray zero(4, '\0'); // DWORD 0 = "não"
+        mime->setData(QStringLiteral("application/x-qt-windows-mime;value=\"CanIncludeInClipboardHistory\""), zero);
+        mime->setData(QStringLiteral("application/x-qt-windows-mime;value=\"CanUploadToCloudClipboard\""), zero);
+        mime->setData(QStringLiteral("application/x-qt-windows-mime;value=\"ExcludeClipboardContentFromMonitorProcessing\""),
+                      zero);
+        QApplication::clipboard()->setMimeData(mime);
+    });
     auto* save = ui::button(QStringLiteral("Salvar em arquivo…"), QStringLiteral("folder"));
     connect(save, &QPushButton::clicked, this, [this, recoveryKey, vaultLabel] {
         const QString file = QFileDialog::getSaveFileName(this, QStringLiteral("Salvar a chave (use um pendrive, não este PC)"),

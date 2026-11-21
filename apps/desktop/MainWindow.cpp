@@ -345,6 +345,9 @@ void MainWindow::saveScreenshots(const QString& dir)
         RecoveryKeyDialog key(QStringLiteral("HD Externo 1"), QStringLiteral("4TX2-WMS6-WP7P-NLLF-LAA3-YB77-3LNW-GDQB"), true,
                               QString(), this);
         shoot(&key, QStringLiteral("12-chave-recuperacao.png"));
+        for (auto* b : key.findChildren<QPushButton*>())
+            if (b->text() == QStringLiteral("Copiar"))
+                b->click(); // confere a marcação "fora do histórico" na área de transferência
     }
     {
         ImportConfigDialog import(this);
