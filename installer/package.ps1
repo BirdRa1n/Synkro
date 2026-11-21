@@ -10,15 +10,22 @@
     4. Confere que o worker roda a partir do pacote sem o Qt do PATH.
     5. Opcional: assina os executáveis com signtool (-CertificateThumbprint).
     6. Gera SHA256SUMS.txt e o .zip.
+    7. Com -Installer: gera Synkro-Setup-<versão>.exe (Inno Setup), o
+       instalador usado pela aba Releases e pelo atualizador do app.
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File installer\package.ps1
+.EXAMPLE
+    powershell -ExecutionPolicy Bypass -File installer\package.ps1 -VersionSuffix beta.1 -Installer
 #>
 [CmdletBinding()]
 param(
     [string]$QtDir = $(if ($env:SYNKRO_QT_DIR) { $env:SYNKRO_QT_DIR } else { 'C:\Qt\6.12.0\mingw_64' }),
     [string]$QtToolsDir = 'C:\Qt\Tools',
     [string]$OutDir,
+    [string]$VersionSuffix = '',
+    [switch]$Installer,
+    [string]$IsccPath,
     [string]$CertificateThumbprint,
     [string]$TimestampUrl = 'http://timestamp.digicert.com',
     [switch]$SkipBuild
@@ -44,14 +51,17 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     else { Write-Warning 'git não encontrado: a primeira configuração (FetchContent) vai falhar' }
 }
 
-$version = ((Select-String -Path (Join-Path $root 'CMakeLists.txt') -Pattern '^\s*VERSION\s+([0-9.]+)').Matches[0].Groups[1].Value)
-if (-not $version) { throw 'versão não encontrada no CMakeLists.txt' }
+$baseVersion = ((Select-String -Path (Join-Path $root 'CMakeLists.txt') -Pattern '^\s*VERSION\s+([0-9.]+)').Matches[0].Groups[1].Value)
+if (-not $baseVersion) { throw 'versão não encontrada no CMakeLists.txt' }
+if ($VersionSuffix -and $VersionSuffix -notmatch '^[0-9A-Za-z.-]+$') { throw "sufixo de versão inválido: $VersionSuffix" }
+$version = if ($VersionSuffix) { "$baseVersion-$VersionSuffix" } else { $baseVersion }
 
 Push-Location $root
 try {
     if (-not $SkipBuild) {
         Write-Host "Compilando o Synkro $version (Release)..."
-        Invoke-Checked 'configuração do CMake' { cmake --preset mingw-release | Out-Host }
+        # Sempre passa o sufixo (vazio inclusive): o cache do CMake não pode guardar o da build anterior.
+        Invoke-Checked 'configuração do CMake' { cmake --preset mingw-release "-DSYNKRO_VERSION_SUFFIX=$VersionSuffix" | Out-Host }
         Invoke-Checked 'compilação' { cmake --build --preset mingw-release | Out-Host }
     }
     $build = Join-Path $root 'out\build\mingw-release'
@@ -97,6 +107,7 @@ gerado em: $((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'))
         $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
         $out = & (Join-Path $stage 'synkro-worker.exe') --version 2>&1
         if ($LASTEXITCODE -ne 0) { throw "synkro-worker não roda a partir do pacote: $out" }
+        if ("$out" -notmatch [regex]::Escape($version)) { throw "o worker do pacote informa '$out', esperado $version" }
         Write-Host "  $out"
     } finally { $env:PATH = $saved }
 
@@ -126,9 +137,35 @@ gerado em: $((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'))
     "{0}  {1}" -f (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant(), (Split-Path -Leaf $zip) |
         Set-Content -Encoding ascii "$zip.sha256"
 
+    $setup = $null
+    if ($Installer) {
+        if (-not $IsccPath) {
+            $candidates = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
+                            "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe")
+            $IsccPath = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+            if (-not $IsccPath) { $IsccPath = (Get-Command iscc -ErrorAction SilentlyContinue).Source }
+        }
+        if (-not $IsccPath) { throw 'Inno Setup 6 (ISCC.exe) não encontrado; instale-o ou informe -IsccPath' }
+        Write-Host 'Gerando o instalador (Inno Setup)...'
+        Invoke-Checked 'Inno Setup' {
+            & $IsccPath /Q "/DAppVersion=$version" "/DNumericVersion=$baseVersion" "/DPackageDir=$stage" "/DOutputDir=$OutDir" `
+                (Join-Path $PSScriptRoot 'synkro.iss') | Out-Host
+        }
+        $setup = Join-Path $OutDir "Synkro-Setup-$version.exe"
+        if (-not (Test-Path $setup)) { throw "instalador não gerado: $setup" }
+        if ($CertificateThumbprint) {
+            Invoke-Checked 'assinatura do instalador' {
+                & $signtool.FullName sign /sha1 $CertificateThumbprint /fd SHA256 /tr $TimestampUrl /td SHA256 $setup | Out-Host
+            }
+        }
+        "{0}  {1}" -f (Get-FileHash -Algorithm SHA256 $setup).Hash.ToLowerInvariant(), (Split-Path -Leaf $setup) |
+            Set-Content -Encoding ascii "$setup.sha256"
+    }
+
     Write-Host ''
     Write-Host "Pacote: $stage"
     Write-Host "Zip:    $zip"
+    if ($setup) { Write-Host "Setup:  $setup" }
 } finally {
     Pop-Location
 }
