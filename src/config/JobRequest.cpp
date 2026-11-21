@@ -56,6 +56,8 @@ Result<BackupRequest> makeBackupRequest(const ConfigSet& set, const JobConfig& j
     BackupRequest req;
     req.jobId = win::fromUtf8(job.id);
     req.sourceRoot = job.files.source;
+    for (const auto& s : job.files.moreSources)
+        req.moreSources.push_back({s.path, s.alias});
     req.minVaultsOk = static_cast<std::size_t>(job.minVaultsOk);
     req.filter = PathFilter(job.files.include, job.files.exclude);
     req.verify = job.files.verifyUncached ? VerifyMode::RereadUncached : VerifyMode::HashOnCopy;

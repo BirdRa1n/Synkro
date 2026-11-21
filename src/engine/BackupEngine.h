@@ -38,9 +38,16 @@ struct ProgressEvent {
     std::size_t total = 0;
 };
 
+// Pasta adicional de uma tarefa: no cofre, seus arquivos ficam em <alias>/.
+struct SourceRoot {
+    std::wstring path;
+    std::wstring alias;
+};
+
 struct BackupRequest {
     std::wstring jobId;
-    std::wstring sourceRoot;
+    std::wstring sourceRoot;               // pasta principal: raiz do cofre
+    std::vector<SourceRoot> moreSources;   // demais pastas (sources:), cada uma em <alias>/
     std::vector<VaultTarget> vaults;
     std::size_t minVaultsOk = 0;  // 0 = todos os cofres
     PathFilter filter;

@@ -18,6 +18,9 @@
 
 #include <QDateTime>
 
+#include <QStringList>
+
+#include <algorithm>
 #include <map>
 #include <optional>
 
@@ -50,11 +53,24 @@ namespace {
 
 constexpr std::size_t kMaxReportedFileErrors = 50;
 
+// Uma pasta de origem já resolvida: de onde ler (talvez dentro do snapshot) e
+// o prefixo dos seus arquivos no catálogo ("" = pasta principal, na raiz).
+struct ReadRoot {
+    std::wstring prefix;   // "<alias>/" no formato do catálogo
+    std::wstring readPath;
+    std::wstring label;    // caminho real, para mensagens
+};
+
+bool startsWith(const std::wstring& s, const std::wstring& prefix)
+{
+    return !prefix.empty() && s.size() > prefix.size() && s.compare(0, prefix.size(), prefix) == 0;
+}
+
 class VaultRun {
 public:
     VaultRun(const BackupRequest& req, const std::wstring& runId, const ScanResult& scan, const VaultTarget& target,
-             const std::wstring& readRoot)
-        : m_req(req), m_runId(runId), m_scan(scan), m_target(target), m_readRoot(readRoot)
+             const std::vector<ReadRoot>& roots)
+        : m_req(req), m_runId(runId), m_scan(scan), m_target(target), m_roots(roots)
     {
         m_result.location = target.location;
     }
@@ -128,7 +144,9 @@ private:
         m_result.unchanged = changes.unchanged;
 
         if (!m_req.overrideGuards) {
-            const GuardVerdict verdict = evaluateChangeGuards(m_req.guards, changes, m_scan.files.size());
+            GuardVerdict verdict = evaluateFolderGuards(catalog);
+            if (!verdict.blocked())
+                verdict = evaluateChangeGuards(m_req.guards, changes, m_scan.files.size());
             if (verdict.blocked()) {
                 m_result.status = VaultRunStatus::Blocked;
                 m_result.guard = verdict;
@@ -213,6 +231,39 @@ private:
         return Status::success();
     }
 
+    // Com várias pastas, uma delas vazia não pode virar "tudo dela foi
+    // excluído" (pendrive ou compartilhamento que não montou, por exemplo).
+    GuardVerdict evaluateFolderGuards(const Catalog& catalog) const
+    {
+        if (m_roots.size() < 2)
+            return {}; // uma pasta só: a guarda de origem vazia de sempre cobre
+        for (const auto& root : m_roots) {
+            auto belongs = [&](const std::wstring& path) {
+                if (!root.prefix.empty())
+                    return startsWith(path, root.prefix);
+                return std::none_of(m_roots.begin(), m_roots.end(),
+                                    [&](const ReadRoot& other) { return startsWith(path, other.prefix); });
+            };
+            std::size_t before = 0, now = 0;
+            for (const auto& e : catalog.entries)
+                before += belongs(e.meta.relativePath) ? 1 : 0;
+            for (const auto& f : m_scan.files)
+                now += belongs(f.relativePath) ? 1 : 0;
+            if (before > 0 && now == 0)
+                return {GuardCode::EmptySource, "a pasta " + win::toUtf8(root.label) + " está vazia, mas o último backup tinha "
+                                                    + std::to_string(before) + " arquivos dela"};
+        }
+        return {};
+    }
+
+    std::wstring sourcePathOf(const std::wstring& relativePath) const
+    {
+        for (const auto& root : m_roots)
+            if (startsWith(relativePath, root.prefix))
+                return win::joinPath(root.readPath, win::fromCatalogPath(relativePath.substr(root.prefix.size())));
+        return win::joinPath(m_roots.front().readPath, win::fromCatalogPath(relativePath));
+    }
+
     // Copia um arquivo novo ou modificado para current/, guardando a versão
     // anterior em versions/<run>/ no último instante antes da troca.
     ManifestRecord copyIn(const FileEntry& cur, const CatalogEntry* previous)
@@ -220,7 +271,7 @@ private:
         ManifestRecord rec;
         rec.path = cur.relativePath;
 
-        const std::wstring source = win::joinPath(m_readRoot, win::fromCatalogPath(cur.relativePath));
+        const std::wstring source = sourcePathOf(cur.relativePath);
         // Em troca de maiúsculas/minúsculas, o arquivo antigo em current/ tem o nome antigo.
         const std::wstring previousPath = previous ? previous->meta.relativePath : std::wstring();
         const std::wstring destination = m_layout.currentFile(previous ? previousPath : cur.relativePath);
@@ -307,7 +358,10 @@ private:
         s.runId = m_runId;
         s.jobId = m_req.jobId;
         s.vaultId = m_result.vaultId;
-        s.source = QString::fromStdWString(m_req.sourceRoot);
+        QStringList sources;
+        for (const auto& root : m_roots)
+            sources << QString::fromStdWString(root.label);
+        s.source = sources.join(QStringLiteral("; "));
         s.status = QString::fromLatin1(status);
         s.startedAt = startedAt.isValid() ? startedAt : QDateTime::currentDateTimeUtc();
         s.finishedAt = QDateTime::currentDateTimeUtc();
@@ -326,7 +380,7 @@ private:
     const std::wstring& m_runId;
     const ScanResult& m_scan;
     const VaultTarget& m_target;
-    const std::wstring& m_readRoot; // origem real ou o caminho equivalente dentro do snapshot VSS
+    const std::vector<ReadRoot>& m_roots; // pastas de origem (ou o equivalente dentro do snapshot VSS)
     vault::JobLayout m_layout;
     std::shared_ptr<const crypto::FileCipher> m_cipher; // cofre cifrado; nulo = em claro
     VaultRunResult m_result;
@@ -411,27 +465,48 @@ BackupResult runBackup(const BackupRequest& req)
         return result;
     }
 
-    // Snapshot VSS: a origem é lida de uma cópia congelada do volume.
-    std::optional<win::VolumeSnapshot> snapshot;
-    std::wstring readRoot = req.sourceRoot;
+    // Pastas de origem: a principal (raiz do cofre) e as adicionais (<alias>/).
+    std::vector<ReadRoot> roots;
+    roots.push_back({{}, req.sourceRoot, req.sourceRoot});
+    for (const auto& s : req.moreSources)
+        roots.push_back({win::toCatalogPath(s.alias) + L"/", s.path, s.path});
+
+    // Snapshot VSS: cada pasta é lida de uma cópia congelada do seu volume
+    // (um snapshot por volume, compartilhado pelas pastas do mesmo disco).
+    std::map<std::wstring, win::VolumeSnapshot> snapshots;
     if (req.useSnapshot) {
-        auto volume = win::queryVolume(req.sourceRoot);
-        auto snap = volume ? win::VolumeSnapshot::create(volume.value().mountPoint)
-                           : Result<win::VolumeSnapshot>(volume.error());
-        if (snap) {
-            snapshot.emplace(std::move(snap).value());
-            readRoot = snapshot->translate(req.sourceRoot);
-            result.snapshotUsed = !readRoot.empty();
-            if (readRoot.empty())
-                readRoot = req.sourceRoot;
-        } else {
-            result.snapshotNote = snap.error().message;
-            if (!req.continueWithoutSnapshot) {
-                result.status = RunStatus::Failed;
-                result.error = "snapshot VSS indisponível: " + snap.error().message;
-                finishHooks(result);
-                return result;
+        bool allSnapshotted = true;
+        for (auto& root : roots) {
+            auto volume = win::queryVolume(root.label);
+            if (!volume) {
+                allSnapshotted = false;
+                result.snapshotNote = volume.error().message;
+                continue;
             }
+            const std::wstring mount = win::foldCase(volume.value().mountPoint);
+            auto it = snapshots.find(mount);
+            if (it == snapshots.end()) {
+                auto snap = win::VolumeSnapshot::create(volume.value().mountPoint);
+                if (!snap) {
+                    allSnapshotted = false;
+                    result.snapshotNote = snap.error().message;
+                    continue;
+                }
+                it = snapshots.emplace(mount, std::move(snap).value()).first;
+            }
+            const std::wstring translated = it->second.translate(root.label);
+            if (translated.empty())
+                allSnapshotted = false;
+            else
+                root.readPath = translated;
+        }
+        result.snapshotUsed = !snapshots.empty();
+        if (!allSnapshotted && !req.continueWithoutSnapshot) {
+            result.status = RunStatus::Failed;
+            result.error = "snapshot VSS indisponível: " + result.snapshotNote;
+            snapshots.clear();
+            finishHooks(result);
+            return result;
         }
     }
 
@@ -442,11 +517,54 @@ BackupResult runBackup(const BackupRequest& req)
         const PathFilter& f = req.filter;
         scanOpt.filter = [&f](std::wstring_view p, bool isDir) { return f.accepts(p, isDir); };
     }
-    auto scan = scanDirectory(readRoot, scanOpt);
-    if (!scan) {
-        result.error = "origem inacessível: " + scan.error().message;
-        finishHooks(result);
-        return result;
+    Result<ScanResult> scan = ScanResult{};
+    for (const auto& root : roots) {
+        auto part = scanDirectory(root.readPath, scanOpt);
+        if (!part) {
+            result.error = "origem inacessível (" + win::toUtf8(root.label) + "): " + part.error().message;
+            snapshots.clear();
+            finishHooks(result);
+            return result;
+        }
+        ScanResult& all = scan.value();
+        if (root.prefix.empty()) {
+            // A pasta principal não pode ter um item com o nome de uma pasta
+            // adicional: os dois iriam para o mesmo lugar no cofre.
+            for (const auto& other : roots) {
+                if (other.prefix.empty())
+                    continue;
+                const std::wstring top = win::foldCase(other.prefix);
+                for (const auto& f : part.value().files) {
+                    const std::wstring folded = win::foldCase(f.relativePath);
+                    if (folded.rfind(top, 0) == 0 || folded + L"/" == top) {
+                        result.error = "a pasta " + win::toUtf8(root.label) + " já tem um item chamado \""
+                                       + win::toUtf8(other.prefix.substr(0, other.prefix.size() - 1))
+                                       + "\", o mesmo nome da pasta adicional " + win::toUtf8(other.label)
+                                       + " no cofre; dê outro name a ela em sources";
+                        snapshots.clear();
+                        finishHooks(result);
+                        return result;
+                    }
+                }
+            }
+        }
+        for (auto& f : part.value().files) {
+            f.relativePath = root.prefix + f.relativePath;
+            all.files.push_back(std::move(f));
+        }
+        for (auto& l : part.value().skippedLinks)
+            all.skippedLinks.push_back(root.prefix + l);
+        for (auto& i : part.value().issues) {
+            i.relativePath = root.prefix + i.relativePath;
+            all.issues.push_back(std::move(i));
+        }
+        all.totalBytes += part.value().totalBytes;
+        all.directoryCount += part.value().directoryCount;
+    }
+    if (roots.size() > 1) {
+        std::sort(scan.value().files.begin(), scan.value().files.end(),
+                  [](const FileEntry& a, const FileEntry& b) { return a.relativePath < b.relativePath; });
+        std::sort(scan.value().skippedLinks.begin(), scan.value().skippedLinks.end());
     }
     result.filesScanned = scan.value().files.size();
     result.bytesScanned = scan.value().totalBytes;
@@ -466,14 +584,14 @@ BackupResult runBackup(const BackupRequest& req)
     for (const auto& target : req.vaults) {
         if (req.progress)
             req.progress({ProgressKind::VaultStarted, target.location, {}, 0, 0});
-        VaultRun run(req, result.runId, scan.value(), target, readRoot);
+        VaultRun run(req, result.runId, scan.value(), target, roots);
         result.vaults.push_back(run.run());
         if (req.progress)
             req.progress({ProgressKind::VaultFinished, target.location, {}, 0, 0});
     }
 
     result.status = aggregateRunStatus(result.vaults, req.minVaultsOk);
-    snapshot.reset(); // libera o snapshot antes dos comandos "after"
+    snapshots.clear(); // libera os snapshots antes dos comandos "after"
     finishHooks(result);
     return result;
 }

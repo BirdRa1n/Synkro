@@ -240,6 +240,9 @@ std::vector<DoctorCheck> runDoctor(const config::ConfigSet& set, const DoctorOpt
         if (j.type == "files") {
             if (!ops::pathExists(j.files.source))
                 r.fail(name + ": a origem não existe", win::toUtf8(j.files.source));
+            for (const auto& s : j.files.moreSources)
+                if (!ops::pathExists(s.path))
+                    r.fail(name + ": uma das pastas não existe", win::toUtf8(s.path));
             if (j.files.vss && !elevated)
                 r.info(name + ": snapshot VSS só como administrador/SYSTEM", "o worker agendado roda como SYSTEM");
         } else if (j.type == "database") {

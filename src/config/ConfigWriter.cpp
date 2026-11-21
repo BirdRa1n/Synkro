@@ -395,7 +395,18 @@ std::string emitJob(const JobConfig& j)
 
     if (j.type == "files") {
         const FilesJob& f = j.files;
-        o << "\nsource: " << quote(f.source) << "\n";
+        if (f.moreSources.empty()) {
+            o << "\nsource: " << quote(f.source) << "\n";
+        } else {
+            // A 1ª pasta fica na raiz do cofre; as demais, em subpastas.
+            o << "\nsources:\n  - " << quote(f.source) << "\n";
+            for (const auto& s : f.moreSources) {
+                if (s.name.empty())
+                    o << "  - " << quote(s.path) << "\n";
+                else
+                    o << "  - { path: " << quote(s.path) << ", name: " << quote(s.name) << " }\n";
+            }
+        }
         auto patterns = [&](const char* key, const std::vector<std::wstring>& v) {
             if (v.empty())
                 return;

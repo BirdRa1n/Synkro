@@ -103,6 +103,31 @@ private slots:
         QCOMPARE(back.schedule[1].betweenEnd, 22 * 60);
         QCOMPARE(back.hooks.before.size(), size_t(1));
         QVERIFY(back.shutdownAfter);
+        QVERIFY(text.find("\nsource: ") != std::string::npos); // uma pasta: formato de sempre
+    }
+
+    void filesJobWithSeveralSourcesRoundTrip()
+    {
+        JobConfig j;
+        j.id = "pdv-arquivos";
+        j.name = "Arquivos do PDV";
+        j.type = "files";
+        j.vaults = {"hd-externo-1"};
+        j.files.source = L"C:\\PDV";
+        j.files.moreSources.push_back({L"D:\\Fiscal", {}, L"Fiscal"});
+        j.files.moreSources.push_back({L"E:\\Exportacao\\Notas", L"notas-exportadas", L"notas-exportadas"});
+
+        const std::string text = emitJob(j);
+        QVERIFY(text.find("sources:") != std::string::npos);
+        std::vector<Diagnostic> d;
+        const JobConfig back = parseJobDocument(text, L"jobs\\pdv-arquivos.yml", sampleGlobal(), d);
+        QVERIFY2(d.empty(), qPrintable(dump(d) + QString::fromStdString(text)));
+        QCOMPARE(back.files.source, std::wstring(L"C:\\PDV"));
+        QCOMPARE(back.files.moreSources.size(), size_t(2));
+        QCOMPARE(back.files.moreSources[0].alias, std::wstring(L"Fiscal"));
+        QCOMPARE(back.files.moreSources[1].name, std::wstring(L"notas-exportadas"));
+        QVERIFY(emitJob(back).find("  - { path: \"E:/Exportacao/Notas\", name: \"notas-exportadas\" }") != std::string::npos);
+        QVERIFY(emitJob(back).find("  - \"D:/Fiscal\"\n") != std::string::npos);
     }
 
     void databaseJobRoundTrip()

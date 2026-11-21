@@ -97,6 +97,50 @@ private slots:
         QCOMPARE(job.schedule[0].atMinutes, 22 * 60 + 30);
     }
 
+    void multipleSources()
+    {
+        const char* yaml = R"(
+version: 1
+id: pdv-arquivos
+name: "Arquivos"
+type: files
+sources:
+  - "C:/PDV"
+  - "D:/Fiscal/"
+  - { path: "E:/Exportacao/Notas", name: notas-exportadas }
+schedule:
+  - weekly: { days: [mon, tue, wed, thu, fri, sat], at: "22:00" }
+  - weekly: { days: [sun], at: "12:00" }
+)";
+        std::vector<Diagnostic> d;
+        const JobConfig job = parseJobDocument(yaml, L"jobs\\pdv-arquivos.yml", sampleGlobal(), d);
+        QVERIFY2(d.empty(), qPrintable(dump(d)));
+        QCOMPARE(job.files.source, std::wstring(L"C:\\PDV"));
+        QCOMPARE(job.files.moreSources.size(), size_t(2));
+        QCOMPARE(job.files.moreSources[0].path, std::wstring(L"D:\\Fiscal"));
+        QCOMPARE(job.files.moreSources[0].alias, std::wstring(L"Fiscal"));
+        QVERIFY(job.files.moreSources[0].name.empty());
+        QCOMPARE(job.files.moreSources[1].alias, std::wstring(L"notas-exportadas"));
+        QCOMPARE(job.schedule.size(), size_t(2));
+        QCOMPARE(job.schedule[1].days, std::vector<int>{7});
+        QCOMPARE(job.schedule[1].atMinutes, 12 * 60);
+        QVERIFY(describeJob({}, job).find("Ler 3 pastas") != std::string::npos);
+    }
+
+    void invalidSources()
+    {
+        auto job = [](const std::string& sources) {
+            return "version: 1\nid: t\nname: t\ntype: files\n" + sources + "schedule:\n  - daily: \"22:00\"\n";
+        };
+        QVERIFY(hasError(diagnose(job("source: \"C:/A\"\nsources: [\"C:/B\"]\n")), "sources", "não os dois"));
+        QVERIFY(hasError(diagnose(job("sources: [\"C:/A\", \"C:/a/\"]\n")), "sources[1]", "repetida"));
+        QVERIFY(hasError(diagnose(job("sources: [\"C:/A\", \"C:/A/B\"]\n")), "sources[1]", "dentro de outra"));
+        QVERIFY(hasError(diagnose(job("sources: [\"C:/A\", \"D:/x/Notas\", \"E:/y/notas\"]\n")), "sources[2].name", "já usa"));
+        QVERIFY(hasError(diagnose(job("sources: [{ path: \"C:/A\", name: a }]\n")), "sources[0].name", "raiz"));
+        QVERIFY(hasError(diagnose(job("sources: [\"C:/A\", \"relativo/x\"]\n")), "sources[1]", "caminho completo"));
+        QVERIFY(hasError(diagnose(job("sources: []\n")), "sources", "lista"));
+    }
+
     void plaintextPasswordRejected()
     {
         const auto d = diagnose(R"(

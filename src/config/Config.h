@@ -150,8 +150,20 @@ struct Hooks {
     std::vector<HookCommand> before, after, onSuccess, onFailure;
 };
 
+// Pasta adicional de uma tarefa de arquivos (`sources:`). No cofre, fica em
+// <alias>\ ao lado dos arquivos da pasta principal.
+struct SourceFolder {
+    std::wstring path;
+    std::wstring name{};  // `name:` explícito no YAML (vazio = derivado da pasta)
+    std::wstring alias{}; // nome da subpasta no cofre (name ou o nome da pasta)
+};
+
 struct FilesJob {
+    // Pasta principal: guardada na raiz do cofre, como nas versões com uma só
+    // pasta (`source:`). As demais (`sources:` a partir do 2º item) ficam em
+    // subpastas, então acrescentar uma pasta não move nada do que já existe.
     std::wstring source;
+    std::vector<SourceFolder> moreSources;
     std::vector<std::wstring> include, exclude;
     bool vss = true;
     bool continueWithoutSnapshot = true;

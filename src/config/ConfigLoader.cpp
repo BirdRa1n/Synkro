@@ -615,15 +615,106 @@ std::vector<std::string> checkExtraArgs(Reader& r, const YAML::Node& section, co
 
 // ---- Tarefa: arquivos -----------------------------------------------------------
 
+std::wstring normalizedFolder(std::wstring p)
+{
+    std::replace(p.begin(), p.end(), L'/', L'\\');
+    while (p.size() > 3 && p.back() == L'\\')
+        p.pop_back();
+    return p;
+}
+
+// `source: "C:/PDV"` (uma pasta, como sempre foi) ou `sources:` com várias.
+// Na lista, a 1ª pasta é a principal (raiz do cofre); as demais ganham uma
+// subpasta no cofre: `name:` ou o nome da própria pasta.
+void parseSources(Reader& r, const YAML::Node& doc, FilesJob& f)
+{
+    const YAML::Node one = doc["source"];
+    const YAML::Node many = doc["sources"];
+    if (one && many) {
+        r.error(many, "sources", "use source (uma pasta) ou sources (várias), não os dois");
+        return;
+    }
+    if (!many) {
+        if (auto s = r.str(doc, "source", "", true)) {
+            f.source = normalizedFolder(w(*s));
+            if (!isAbsoluteWindowsPath(f.source))
+                r.error(one, "source", "informe o caminho completo da pasta (ex.: \"C:/PDV\")");
+        }
+        return;
+    }
+    if (!many.IsSequence() || many.size() == 0) {
+        r.error(many, "sources", "informe uma lista de pastas (ex.: [\"C:/PDV\", \"D:/Fiscal\"])");
+        return;
+    }
+
+    std::vector<std::wstring> seenPaths;
+    std::set<std::wstring> seenAliases;
+    for (std::size_t i = 0; i < many.size(); ++i) {
+        const YAML::Node item = many[i];
+        const std::string key = "sources[" + std::to_string(i) + "]";
+        SourceFolder sf;
+        if (item.IsScalar()) {
+            sf.path = w(item.Scalar());
+        } else if (item.IsMap()) {
+            r.checkKeys(item, key, {"path", "name"});
+            if (auto p = r.str(item, "path", key, true))
+                sf.path = w(*p);
+            if (auto n = r.str(item, "name", key))
+                sf.name = w(*n);
+        } else {
+            r.error(item, key, "esperado o caminho da pasta ou { path, name }");
+            continue;
+        }
+        sf.path = normalizedFolder(sf.path);
+        if (!isAbsoluteWindowsPath(sf.path)) {
+            r.error(item, key, "informe o caminho completo da pasta (ex.: \"D:/Fiscal\")");
+            continue;
+        }
+        // Pastas repetidas ou uma dentro da outra seriam copiadas duas vezes.
+        const std::wstring folded = win::foldCase(sf.path) + L"\\";
+        for (const auto& prev : seenPaths) {
+            if (folded == prev)
+                r.error(item, key, "pasta repetida");
+            else if (folded.rfind(prev, 0) == 0 || prev.rfind(folded, 0) == 0)
+                r.error(item, key, "uma pasta não pode estar dentro de outra da mesma tarefa");
+        }
+        seenPaths.push_back(folded);
+
+        if (i == 0) {
+            if (!sf.name.empty())
+                r.error(item, key + ".name",
+                        "a primeira pasta fica na raiz do cofre (como numa tarefa de uma pasta só); name vale para as demais");
+            f.source = sf.path;
+            continue;
+        }
+        sf.alias = sf.name;
+        if (sf.alias.empty()) {
+            const auto cut = sf.path.find_last_of(L'\\');
+            sf.alias = cut == std::wstring::npos ? std::wstring() : sf.path.substr(cut + 1);
+        }
+        static const std::wstring invalid = L"\\/:*?\"<>|";
+        const bool bad = sf.alias.empty() || sf.alias == L"." || sf.alias == L".." || sf.alias.size() > 64
+                         || sf.alias.find_first_of(invalid) != std::wstring::npos || sf.alias.back() == L' '
+                         || sf.alias.back() == L'.';
+        if (bad) {
+            r.error(item, key + ".name",
+                    sf.name.empty() ? "não dá para usar o nome desta pasta no cofre; informe name (ex.: name: fiscal)"
+                                    : "nome inválido para uma pasta do cofre");
+            continue;
+        }
+        if (!seenAliases.insert(win::foldCase(sf.alias)).second) {
+            r.error(item, key + ".name",
+                    "outra pasta já usa o nome \"" + win::toUtf8(sf.alias) + "\" no cofre; informe name para diferenciar");
+            continue;
+        }
+        f.moreSources.push_back(std::move(sf));
+    }
+}
+
 void parseFilesJob(Reader& r, const YAML::Node& doc, JobConfig& job)
 {
     FilesJob& f = job.files;
-    if (auto s = r.str(doc, "source", "", true)) {
-        f.source = w(*s);
-        std::replace(f.source.begin(), f.source.end(), L'/', L'\\');
-        if (!isAbsoluteWindowsPath(f.source))
-            r.error(doc["source"], "source", "informe o caminho completo da pasta (ex.: \"C:/PDV\")");
-    }
+    parseSources(r, doc, f);
     for (const auto& s : r.strings(doc, "include", ""))
         f.include.push_back(w(s));
     for (const auto& s : r.strings(doc, "exclude", ""))
@@ -1427,7 +1518,7 @@ void parseJobImpl(Reader& r, const std::optional<YAML::Node>& doc, const GlobalC
         "version", "id", "name", "type", "enabled", "group", "vaults", "min_vaults_ok", "schedule",
         "depends_on", "depends_mode", "timeout", "hooks", "shutdown_after"};
     static const std::initializer_list<const char*> filesKeys = {
-        "source", "include", "exclude", "consistency", "change_detection", "verify", "retention", "guards"};
+        "source", "sources", "include", "exclude", "consistency", "change_detection", "verify", "retention", "guards"};
     static const std::initializer_list<const char*> dbKeys = {
         "engine", "connection", "databases", "postgresql", "mysql", "firebird", "sqlserver", "sqlite", "custom", "tools", "staging",
         "dump_retries", "remote", "retention", "guards", "restore_test"};
@@ -1652,11 +1743,23 @@ void checkPhysicalDisks(ConfigSet& set)
         }
 
         std::vector<std::uint32_t> sourceDisks;
-        if (j.type == "files" && !j.files.source.empty() && ops::pathExists(j.files.source))
-            sourceDisks = physicalDisksOf(j.files.source);
-        else if (j.type == "files" && !j.files.source.empty())
-            set.diagnostics.push_back({Severity::Warning, j.file, j.line, 1, "source",
-                                       "a pasta de origem não existe nesta máquina"});
+        if (j.type == "files") {
+            std::vector<std::wstring> folders;
+            if (!j.files.source.empty())
+                folders.push_back(j.files.source);
+            for (const auto& s : j.files.moreSources)
+                folders.push_back(s.path);
+            for (const auto& folder : folders) {
+                if (ops::pathExists(folder)) {
+                    for (auto d : physicalDisksOf(folder))
+                        sourceDisks.push_back(d);
+                } else {
+                    set.diagnostics.push_back({Severity::Warning, j.file, j.line, 1,
+                                               j.files.moreSources.empty() ? "source" : "sources",
+                                               "a pasta de origem " + win::toUtf8(folder) + " não existe nesta máquina"});
+                }
+            }
+        }
 
         for (size_t a = 0; a < vaultDisks.size(); ++a) {
             if (!sourceDisks.empty() && overlaps(vaultDisks[a].second, sourceDisks))

@@ -73,7 +73,15 @@ void describeFiles(std::ostringstream& o, const ConfigSet& set, const JobConfig&
 {
     const FilesJob& f = job.files;
     int step = 1;
-    o << "  " << step++ << ". Ler a pasta " << win::toUtf8(f.source);
+    if (f.moreSources.empty()) {
+        o << "  " << step++ << ". Ler a pasta " << win::toUtf8(f.source);
+    } else {
+        o << "  " << step++ << ". Ler " << (f.moreSources.size() + 1) << " pastas:\n"
+          << "       • " << win::toUtf8(f.source) << " (na raiz do cofre)\n";
+        for (const auto& s : f.moreSources)
+            o << "       • " << win::toUtf8(s.path) << " (no cofre em " << win::toUtf8(s.alias) << "\\)\n";
+        o << "     ";
+    }
     if (f.vss)
         o << " a partir de um snapshot VSS (arquivos em uso ficam consistentes; exige execução como "
              "administrador/SYSTEM)"
@@ -101,7 +109,8 @@ void describeFiles(std::ostringstream& o, const ConfigSet& set, const JobConfig&
       << describeDuration(f.keepDeletedSeconds) << ".\n";
 
     o << "\nPROTEÇÕES\n";
-    o << "  • Se a pasta de origem sumir ou ficar vazia, nada é alterado nos cofres e um alerta é aberto.\n";
+    o << (f.moreSources.empty() ? "  • Se a pasta de origem sumir ou ficar vazia, nada é alterado nos cofres e um alerta é aberto.\n"
+                                : "  • Se qualquer uma das pastas sumir ou ficar vazia, nada é alterado nos cofres e um alerta é aberto.\n");
     o << "  • Se mais de " << describePercent(f.maxDeleted) << " dos arquivos sumirem ou mais de "
       << describePercent(f.maxModified) << " forem alterados de uma vez, a execução é bloqueada até confirmação.\n";
     if (!f.sentinelFile.empty())

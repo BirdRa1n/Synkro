@@ -132,12 +132,14 @@ std::vector<AlertRow> computeAlerts(const config::ConfigSet& set, StateStore& st
         for (const auto& job : set.jobs) {
             if (!job.enabled || job.type != "files" || job.files.source.empty())
                 continue;
-            auto vol = win::queryVolume(job.files.source);
-            if (!vol)
-                continue;
             int level = -1;
             std::string text;
-            applyHealth(health.value(), vol.value().physicalDisks, level, text);
+            std::vector<std::wstring> folders{job.files.source};
+            for (const auto& s : job.files.moreSources)
+                folders.push_back(s.path);
+            for (const auto& folder : folders)
+                if (auto vol = win::queryVolume(folder))
+                    applyHealth(health.value(), vol.value().physicalDisks, level, text);
             if (level >= 1)
                 add("source_disk_health", job.id, level == 2 ? AlertSeverity::Critical : AlertSeverity::Warning,
                     "o disco da origem de \"" + job.name + "\" está " + (level == 2 ? "com defeito" : "com sinais de falha")
