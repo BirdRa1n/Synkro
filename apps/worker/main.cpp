@@ -14,6 +14,7 @@
 #include "engine/Verify.h"
 #include "hash/Sha256.h"
 #include "core/Paths.h"
+#include "crypto/VaultKey.h"
 #include "platform/windows/NetworkShare.h"
 #include "platform/windows/Volume.h"
 #include "platform/windows/Win32.h"
@@ -154,6 +155,8 @@ int cmdRestore(const QStringList& args)
     req.targetDirectory = nativeArg(p.value(QStringLiteral("to")));
     req.runId = p.value(QStringLiteral("run")).toStdWString();
     req.pathPrefix = p.value(QStringLiteral("path")).toStdWString();
+    if (!ensureVaultKey(req.vaultLocation))
+        return ExitFailure;
 
     auto r = synkro::restore(req);
     if (!r)
@@ -178,6 +181,8 @@ int cmdVerify(const QStringList& args)
     const synkro::vault::JobLayout layout(vaultLocationArg(p.value(QStringLiteral("vault"))),
                                           p.value(QStringLiteral("job")).toStdWString());
     const double sample = p.isSet(QStringLiteral("sample")) ? p.value(QStringLiteral("sample")).toDouble() : 100.0;
+    if (!ensureVaultKey(layout.vaultLocation()))
+        return ExitFailure;
     auto r = synkro::verifyVault(layout, sample);
     if (!r)
         return fail(r.error());
@@ -288,6 +293,23 @@ void addCandidateOptions(QCommandLineParser& p)
     p.addOption({QStringLiteral("user"), QStringLiteral("Cofre em rede: usuário do compartilhamento."), QStringLiteral("usuário")});
     p.addOption({QStringLiteral("password-secret"), QStringLiteral("Cofre em rede: segredo com a senha (secret set)."),
                  QStringLiteral("nome")});
+    p.addOption({QStringLiteral("encrypt"), QStringLiteral("Cifra o cofre (AES-256); mostra a chave de recuperação uma vez.")});
+}
+
+void printRecoveryKey(const synkro::crypto::EnableResult& r)
+{
+    out() << "\n================================================================\n"
+          << "  CHAVE DE RECUPERAÇÃO DO COFRE (anote agora; ela não é exibida de novo)\n\n"
+          << "      " << q(r.recoveryKey) << "\n\n"
+          << "  Sem ela, o cofre só pode ser lido nesta máquina. Se este computador\n"
+          << "  for perdido, é a ÚNICA forma de restaurar os backups. Guarde-a fora\n"
+          << "  do PDV (impressa no cofre da loja, gerenciador de senhas...).\n"
+          << "================================================================\n";
+    if (r.storedOnMachine)
+        out() << "chave guardada nesta máquina (DPAPI): o worker agendado cifra sem pedir nada" << Qt::endl;
+    else
+        err() << "aviso: a chave NÃO ficou guardada nesta máquina (" << q(r.storeError)
+              << "); rode como administrador: synkro-worker vault unlock <disco>" << Qt::endl;
 }
 
 synkro::vault::CandidateReport runCheck(const QCommandLineParser& p, const QString& disk)
@@ -378,21 +400,65 @@ int cmdVault(const QStringList& args)
                                           ? synkro::win::normalizeUnc(native)
                                           : report.volume.mountPoint;
         if (auto existing = synkro::vault::readIdentity(location)) {
-            out() << "\ncofre já existente reaproveitado: " << existing.value().vaultId << Qt::endl;
+            out() << "\ncofre já existente reaproveitado: " << existing.value().vaultId
+                  << (synkro::crypto::isEncrypted(location) ? " (cifrado)" : "") << Qt::endl;
+            if (p.isSet(QStringLiteral("encrypt")) && !synkro::crypto::isEncrypted(location)) {
+                auto enabled = synkro::crypto::enableEncryption(location);
+                if (!enabled)
+                    return fail(enabled.error());
+                printRecoveryKey(enabled.value());
+            }
             return ExitOk;
         }
         auto id = synkro::vault::initialize(location, label.trimmed());
         if (!id)
             return fail(id.error());
         out() << "\ncofre inicializado: " << id.value().vaultId << " em " << q(synkro::vault::vaultRoot(location)) << Qt::endl;
+        if (p.isSet(QStringLiteral("encrypt"))) {
+            auto enabled = synkro::crypto::enableEncryption(location);
+            if (!enabled)
+                return fail(enabled.error());
+            printRecoveryKey(enabled.value());
+        }
         return ExitOk;
     }
     if (sub == QLatin1String("show")) {
-        auto id = synkro::vault::readIdentity(vaultLocationArg(disk));
+        const std::wstring location = vaultLocationArg(disk);
+        auto id = synkro::vault::readIdentity(location);
         if (!id)
             return fail(id.error());
         out() << synkro::vault::serialize(id.value());
+        if (synkro::crypto::isEncrypted(location)) {
+            const auto cipher = synkro::crypto::cipherFor(location);
+            out() << "\ncifrado: sim (AES-256-GCM); chave "
+                  << (cipher ? QStringLiteral("disponível nesta máquina")
+                             : QStringLiteral("NÃO disponível nesta máquina (vault unlock)"))
+                  << "\n";
+        } else {
+            out() << "\ncifrado: não\n";
+        }
         out().flush();
+        return ExitOk;
+    }
+    if (sub == QLatin1String("unlock")) {
+        // Guarda a chave do cofre nesta máquina (DPAPI) a partir da chave de
+        // recuperação: PDV reinstalado ou cofre trazido de outra loja.
+        const std::wstring location = vaultLocationArg(disk);
+        if (!synkro::crypto::isEncrypted(location)) {
+            out() << "o cofre não é cifrado; nada a fazer" << Qt::endl;
+            return ExitOk;
+        }
+        std::string text = readSecretInteractively(QStringLiteral("Chave de recuperação (XXXX-XXXX-...): "));
+        auto key = synkro::crypto::unlockWithRecoveryKey(location, text);
+        synkro::wipe(text);
+        if (!key)
+            return fail(key.error());
+        auto id = synkro::vault::readIdentity(location);
+        auto st = synkro::crypto::storeKeyOnMachine(id.value().vaultId, key.value());
+        synkro::crypto::wipe(key.value());
+        if (!st)
+            return fail(st.error());
+        out() << "chave do cofre \"" << id.value().label << "\" guardada nesta máquina" << Qt::endl;
         return ExitOk;
     }
     return (usage(), ExitUsage);

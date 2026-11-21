@@ -14,8 +14,10 @@
 #include "database/DatabaseRestore.h"
 #include "database/DumpStore.h"
 #include "database/RestoreTest.h"
+#include "crypto/VaultKey.h"
 #include "engine/Scrub.h"
 #include "notify/Notifier.h"
+#include "vault/Vault.h"
 #include "engine/VaultOps.h"
 #include "platform/windows/Locks.h"
 #include "platform/windows/Shutdown.h"
@@ -92,6 +94,8 @@ bool anotherJobRunning(const synkro::config::ConfigSet& set, const std::string& 
     return false;
 }
 
+} // namespace
+
 std::string readSecretInteractively(const QString& prompt)
 {
     HANDLE in = ::GetStdHandle(STD_INPUT_HANDLE);
@@ -102,6 +106,10 @@ std::string readSecretInteractively(const QString& prompt)
         std::getline(std::cin, line);
         while (!line.empty() && (line.back() == '\r' || line.back() == '\n'))
             line.pop_back();
+        // O PowerShell 5.1 com $OutputEncoding UTF-8 põe um BOM no início do
+        // que manda pelo pipe: ele não faz parte do segredo.
+        if (line.rfind("\xEF\xBB\xBF", 0) == 0)
+            line.erase(0, 3);
         return line;
     }
     err() << prompt;
@@ -121,7 +129,35 @@ std::string readSecretInteractively(const QString& prompt)
     return utf8;
 }
 
-} // namespace
+bool ensureVaultKey(const std::wstring& location)
+{
+    if (!synkro::crypto::isEncrypted(location))
+        return true;
+    auto cipher = synkro::crypto::cipherFor(location);
+    if (cipher)
+        return true;
+    if (cipher.error().code != synkro::ErrorCode::KeyRequired) {
+        fail(cipher.error());
+        return false;
+    }
+    err() << "o cofre em " << q(location) << " é cifrado e a chave não está guardada nesta máquina." << Qt::endl;
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        std::string text = readSecretInteractively(QStringLiteral("Chave de recuperação (XXXX-XXXX-...): "));
+        if (text.empty())
+            break;
+        auto key = synkro::crypto::unlockWithRecoveryKey(location, text);
+        synkro::wipe(text);
+        if (key) {
+            auto id = synkro::vault::readIdentity(location);
+            synkro::crypto::rememberKey(id.value().vaultId, key.value());
+            synkro::crypto::wipe(key.value());
+            return true;
+        }
+        err() << q(key.error().message) << Qt::endl;
+    }
+    err() << "sem a chave de recuperação, o conteúdo do cofre não pode ser lido" << Qt::endl;
+    return false;
+}
 
 int runConfiguredJob(const synkro::config::ConfigSet& set, const synkro::config::JobConfig& job, const RunOptions& options)
 {
@@ -488,6 +524,8 @@ int cmdRestoreDb(const QStringList& args)
         req.targetPath = nativeArg(p.value(QStringLiteral("to")));
     if (job && job->type == "database")
         req.job = job->database; // conexão e ferramentas da tarefa nesta máquina
+    if (!ensureVaultKey(req.vaultLocation))
+        return ExitFailure;
 
     auto r = synkro::db::restoreDatabase(req);
     if (!r)

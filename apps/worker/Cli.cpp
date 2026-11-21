@@ -47,6 +47,8 @@ void usage()
           << "  vault init <disco> --label <nome> [--source P]...   verifica e inicializa o cofre\n"
           << "       <disco> pode ser \\\\servidor\\pasta (cofre em rede; --user U --password-secret NOME)\n"
           << "  vault show <disco>                                   mostra a identidade do cofre\n"
+          << "  vault init ... --encrypt                             cofre cifrado (mostra a chave de recuperação)\n"
+          << "  vault unlock <disco>                                 guarda nesta máquina a chave de um cofre cifrado\n"
           << "\nConfiguração\n"
           << "  config validate | plan [--job ID] | apply [--no-tasks]   [--config-dir D]\n"
           << "  config export --to PACOTE.yml [--jobs a,b]   pacote sem senhas e sem a identidade dos discos\n"

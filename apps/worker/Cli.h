@@ -46,6 +46,13 @@ int exitFor(synkro::RunStatus s);
 // Aceita a raiz de um disco ("E:\") ou uma pasta que contenha SynkroVault.
 std::wstring vaultLocationArg(const QString& v);
 
+// Lê um segredo sem eco no console (ou uma linha da entrada padrão).
+std::string readSecretInteractively(const QString& prompt);
+
+// Cofre cifrado sem a chave nesta máquina: pede a chave de recuperação e a
+// guarda só na memória deste processo. false se não houver como ler o cofre.
+bool ensureVaultKey(const std::wstring& vaultLocation);
+
 struct RunOptions {
     std::string trigger = "manual";
     bool overrideGuards = false;
