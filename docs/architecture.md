@@ -180,6 +180,39 @@ Um disco permanentemente conectado e gravável é criptografado junto com a orig
 - O Synkro trata a ausência desse cofre como normal até `max_vault_absence_days`; depois, alerta.
 - O dashboard exibe, para cada cofre: última vez visto, último backup bem-sucedido, espaço livre e saúde.
 
+### 3.5. Cofre cifrado (Fase 5)
+
+O disco de rodízio sai da loja e o NAS é acessível a outras pessoas. Os XMLs fiscais e os dumps têm dados pessoais (CPF, endereços), que a LGPD exige proteger. Um cofre pode, por isso, ser **cifrado**: o conteúdo de cada arquivo e de cada dump fica ilegível sem a chave. O BitLocker cobre só discos locais, só nas edições Pro e exige desbloqueio em cada PC; a cifragem do Synkro vale também para NAS e para restaurar em qualquer Windows.
+
+**Algoritmos.** Tudo via Windows CNG, sem bibliotecas de terceiros: AES-256-GCM, HMAC-SHA256, PBKDF2-SHA256 e o gerador aleatório do sistema.
+
+**Chaves.**
+- **Chave do cofre:** cada cofre cifrado tem uma chave aleatória de 256 bits.
+- **No cofre:** `SynkroVault\key.json` guarda essa chave **cifrada** com a **chave de recuperação**. A chave de recuperação tem 160 bits aleatórios, é mostrada uma única vez (`XXXX-XXXX-...`, 8 grupos, alfabeto base32) e passa por PBKDF2-SHA256 com 200 mil iterações e salt próprio. A cifragem da chave usa AES-GCM, autenticado com o `vault_id` do cofre.
+- **Nesta máquina:** uma cópia da chave fica no cofre de segredos (DPAPI, nome `vault-key.<vault_id>`). Assim o worker agendado cifra sem ninguém digitar nada.
+- **Computador novo:** basta digitar a chave de recuperação na restauração (CLI ou desktop). Ela fica só na memória do processo, ou é guardada com `vault unlock`.
+
+**Formato de arquivo.**
+- **Cabeçalho** (36 bytes): `SYNKENC1`, `key_id` (8 bytes do HMAC da chave do cofre), salt (16 bytes) e o tamanho do bloco. É autenticado em todos os blocos.
+- **Chave por arquivo:** `HMAC-SHA256(chave do cofre, "synkro-file-v1" ‖ salt)`. Com salt aleatório, os nonces nunca se repetem entre arquivos.
+- **Blocos:** de 1 MiB, cada um com AES-256-GCM e tag de 16 bytes. O nonce é o índice do bloco mais a marca de último bloco (construção STREAM). Blocos trocados de ordem, removidos ou um arquivo truncado falham na autenticação.
+- **Desempenho:** com 512 MB, o tempo de backup e de verificação ficou dentro da variação de uma execução sem cifra (o disco é o gargalo).
+
+**Onde entra.**
+- **Pontos de passagem:** `copyFileVerified` cifra ao gravar no cofre (backup, dumps), decifra ao ler (restauração de arquivos e bancos) e recifra entre cofres com chaves diferentes (reparo do scrub). `hashVaultFile` decifra para conferir (verificação, scrub e a releitura sem cache).
+- **Hash:** o catálogo continua guardando o SHA-256 do conteúdo original, então a detecção de mudanças e a conferência de restauração não mudam.
+- **Autenticação:** uma falha de autenticação é tratada como corrupção. Com dois cofres, o scrub repara a partir do outro.
+
+**Garantias.**
+- **Sem gravação em claro:** sem a chave, o backup falha naquele cofre (`KeyRequired`) e nada é gravado.
+- **`key.json` apagado:** se a máquina sabe que o cofre era cifrado (tem a chave guardada) e o `key.json` sumiu, o Synkro recusa gravar em claro.
+- **Só cofres novos:** um cofre só pode ser cifrado enquanto não tem backups. Assim nunca existe cofre "metade cifrado"; para cifrar dados existentes, prepara-se um cofre novo.
+
+**Limites (conscientes).**
+- **Metadados visíveis:** nomes de pastas e arquivos, tamanhos, datas e os hashes do catálogo ficam visíveis. Só o conteúdo é cifrado. Os hashes permitem a quem já tem um arquivo confirmar que ele está no cofre, mas não revelam o conteúdo.
+- **PDV roubado:** quem levar o PDV **e** o disco consegue ler, porque a chave está guardada no PDV (DPAPI). A proteção é contra a perda ou o roubo do **cofre**.
+- **Perda dupla:** sem a chave de recuperação e sem a máquina que guarda a chave, os dados não podem ser recuperados por ninguém. É por isso que o desktop só conclui depois da confirmação de que a chave foi anotada.
+
 ---
 
 ## 4. Estrutura do cofre (destino)
@@ -731,6 +764,8 @@ Scrub agendado com reparo entre cofres, saúde SMART, instalador MSI assinado, g
 > **Entregue (2026-11-20):** notificações externas por e-mail, webhook (JSON próprio, Slack, Discord, Teams) e Telegram, com fila, novas tentativas, lembretes, aviso de resolução e relatório diário (§12.1). **Cofres em compartilhamento de rede** (NAS/servidor) com credencial via DPAPI, conexão sem letra de unidade e sondagem do servidor (§3.3.1).
 >
 > No desktop, o cofre em rede é cadastrado em Cofres → Adicionar cofre → Pasta na rede, e a restauração vale também de um computador novo (Restaurar → Cofre em rede…).
+>
+> **Cofre cifrado** (AES-256-GCM via CNG), com chave de recuperação e cópia DPAPI na máquina; abrange arquivos, dumps, verificação, scrub e restauração em qualquer computador (§3.5).
 >
 > **Pendência dos cofres em rede:** validar com um NAS real (Synology, QNAP, Samba) e em domínio com a conta do computador; os testes usam o compartilhamento administrativo da própria máquina por loopback.
 

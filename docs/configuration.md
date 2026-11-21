@@ -234,6 +234,8 @@ notifications:
 - `synkro-worker notify`: envia o que está pendente, sem esperar o intervalo de reenvio.
 - `synkro-worker notify list`: mostra o histórico, com as tentativas e o último erro.
 
+> **Cofre cifrado:** a cifragem é uma propriedade do próprio cofre (`SynkroVault\key.json`), criada com `vault init --encrypt` ou pelo desktop. Não há chave no YAML e não há campo a configurar ([operations.md §7.5](operations.md#75-cofre-cifrado-e-chave-de-recuperação)).
+
 ### 5.2. Cofres em rede (NAS ou servidor)
 
 Um cofre com `path` UNC (`//servidor/compartilhamento/pasta`) fica numa pasta de outra máquina: protege contra a perda do PDV inteiro. Como preparar:

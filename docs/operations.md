@@ -158,7 +158,7 @@ O Synkro **nunca sobrescreve**: a restauração vai sempre para uma pasta, banco
 
 - **Arquivos:** desktop → **Restaurar**, escolha a tarefa, a execução (ponto no tempo) e a pasta de destino. Linha de comando: `synkro-worker restore --vault E:\ --job pdv-arquivos --to D:\Restaurado [--run r-...] [--path pasta/arquivo]`.
 - **Bancos:** desktop → **Restaurar** (aba de dumps) ou `synkro-worker restore-db --vault E:\ --job pdv-postgres --database pdv_vendas --target-database pdv_vendas_restaurado`. Firebird e SQLite usam `--to <arquivo novo>`.
-- **Sem o Synkro:** os arquivos em `current\` do cofre são cópias normais; cada dump tem ao lado um `.dump.json` com o comando de restauração manual (`restore_hint`).
+- **Sem o Synkro:** os arquivos em `current\` do cofre são cópias normais; cada dump tem ao lado um `.dump.json` com o comando de restauração manual (`restore_hint`). Num **cofre cifrado** isso não vale: o conteúdo só é lido pelo Synkro, com a chave (seção 7.5).
 
 Trocar o banco de produção pelo restaurado é uma decisão do responsável pelo sistema e fica fora do Synkro.
 
@@ -200,7 +200,34 @@ O alerta e o `synkro-worker status` mostram o motivo.
 - **Desktop:** em **Restaurar**, os cofres em rede declarados e acessíveis aparecem na lista. Em **Cofre em rede…**, você informa a pasta, o usuário e a senha; isso funciona até num computador novo, sem configuração, porque o cofre é autossuficiente. Nada é gravado no NAS.
 - **Linha de comando:** `synkro-worker restore --vault \\nas01\backup\pdv01 --job pdv-arquivos --to D:\Restaurado`. Se a sessão não tiver acesso ao NAS, rode `net use \\nas01\backup /user:nas01\synkro` antes.
 
-### 7.5. Códigos de saída do worker
+### 7.5. Cofre cifrado e chave de recuperação
+
+**Criar:**
+- **Desktop:** Cofres → Adicionar cofre → marque **Cifrar o cofre (AES-256)**.
+- **Linha de comando:** `synkro-worker vault init F:\ --label "HD Rodízio" --encrypt`.
+
+Só um cofre novo, sem backups, pode ser cifrado. A **chave de recuperação** aparece uma única vez.
+- Imprima ou anote e guarde-a **fora do PDV**: no cofre da loja, com o responsável, num gerenciador de senhas.
+- Não a guarde num arquivo no próprio PDV, nem no próprio disco de backup.
+- Vale um registro por cofre: cada cofre tem a sua chave.
+
+| Situação | O que fazer |
+|---|---|
+| Uso normal | Nada: a chave fica guardada nesta máquina e o worker cifra sozinho |
+| PDV reinstalado ou trocado, mesmos cofres | `synkro-worker vault unlock <disco>` como administrador (pede a chave de recuperação) |
+| Restaurar num computador novo | Desktop: Restaurar, escolha o cofre e digite a chave quando pedida. Linha de comando: `restore` / `restore-db` também pedem. |
+| Backup falha com "é cifrado e a chave não está disponível nesta máquina" | `vault unlock` no disco indicado |
+| "este cofre era cifrado, mas o key.json sumiu" | Alguém apagou `SynkroVault\key.json`. O Synkro não grava em claro. Restaure o arquivo de outra cópia ou prepare um cofre novo. |
+| Chave de recuperação perdida, PDV funcionando | Os backups continuam funcionando. Prepare um cofre **novo** cifrado (com chave nova, anotada desta vez) e aposente o antigo quando o novo tiver o histórico necessário. |
+| Chave de recuperação perdida **e** PDV perdido | Os dados desse cofre não podem ser recuperados por ninguém |
+
+O que a cifragem protege:
+- **Protegido:** o conteúdo dos arquivos e dos dumps, se o disco ou o NAS cair em mãos erradas.
+- **Não protegido:** nomes de pastas e arquivos, tamanhos e datas continuam visíveis, e quem levar o PDV junto com o disco consegue ler.
+
+Detalhes em [architecture.md §3.5](architecture.md#35-cofre-cifrado-fase-5).
+
+### 7.6. Códigos de saída do worker
 
 `0` sucesso · `1` degradado · `2` falha · `3` bloqueado · `4` já em execução / ignorado · `64` uso incorreto.
 
