@@ -21,9 +21,9 @@
 using namespace ui;
 
 VaultsPage::VaultsPage()
-    : Page(QStringLiteral("Cofres"), QStringLiteral("Para onde vão as cópias. Cada cofre fica num disco físico diferente."))
+    : Page(QStringLiteral("Cofres"), QStringLiteral("Para onde vão as cópias. Cada cofre fica num disco físico diferente ou em outra máquina da rede."))
 {
-    auto* add = button(QStringLiteral("Adicionar disco"), QStringLiteral("plus"), true);
+    auto* add = button(QStringLiteral("Adicionar cofre"), QStringLiteral("plus"), true);
     connect(add, &QPushButton::clicked, this, [this] {
         AddVaultDialog dlg(this);
         if (dlg.exec() == QDialog::Accepted)
@@ -172,9 +172,20 @@ void VaultsPage::refresh()
             seen = st->vaultSeen(obs.vaultId);
         fact(0, QStringLiteral("Último backup"), seen ? fmt::when(seen->lastSuccessAt) : QStringLiteral("—"));
         fact(1, QStringLiteral("Visto pela última vez"), obs.connected ? QStringLiteral("Agora") : seen ? fmt::when(seen->lastSeenAt) : QStringLiteral("Nunca"));
-        fact(2, QStringLiteral("Local"), obs.connected ? fmt::q(obs.location) : QStringLiteral("—"));
+        fact(2, vc->network ? QStringLiteral("Pasta na rede") : QStringLiteral("Local"),
+             vc->network ? QString::fromStdWString(vc->path) : obs.connected ? fmt::q(obs.location) : QStringLiteral("—"));
         fact(3, QStringLiteral("Identidade"), obs.vaultId.left(4) + QStringLiteral("…") + obs.vaultId.right(4));
-        if (obs.connected) {
+        if (vc->network && !obs.connected && !obs.unavailableReason.empty()) {
+            auto* box = new QVBoxLayout;
+            box->setSpacing(0);
+            box->addWidget(label(QStringLiteral("Por que está inacessível"), "muted"));
+            auto* why = label(fmt::q(obs.unavailableReason), "fact");
+            why->setWordWrap(true);
+            why->setStyleSheet(QStringLiteral("color:%1;").arg(tk().warnFg.name()));
+            box->addWidget(why);
+            facts->addLayout(box, 2, 0, 1, 2);
+        }
+        if (obs.connected && !vc->network) {
             QString health = obs.healthText.empty() ? QStringLiteral("Desconhecida") : fmt::q(obs.healthText);
             auto* box = new QVBoxLayout;
             box->setSpacing(0);
@@ -229,24 +240,30 @@ void VaultsPage::refresh()
         ++i;
     }
 
-    // Cartão para adicionar um disco.
+    // Cartão para adicionar um cofre (disco ou pasta na rede).
     auto* add = card("addCard");
     auto* av = new QVBoxLayout(add);
     av->setContentsMargins(22, 20, 22, 20);
     av->setSpacing(10);
-    av->addWidget(label(QStringLiteral("Adicionar um disco"), "h2"));
-    av->addWidget(label(QStringLiteral("Antes de virar cofre, o disco passa por uma checagem: precisa ser um disco físico "
-                                       "diferente da origem e dos outros cofres, ter sistema de arquivos adequado, espaço "
-                                       "suficiente e passar num teste de gravação e releitura."),
+    av->addWidget(label(QStringLiteral("Adicionar um cofre"), "h2"));
+    av->addWidget(label(QStringLiteral("Antes de virar cofre, o destino passa por uma checagem: um disco precisa ser fisicamente "
+                                       "diferente da origem e dos outros cofres; uma pasta na rede precisa estar em outra "
+                                       "máquina. Os dois passam por um teste de gravação e releitura."),
                         "muted"));
     av->addStretch(1);
-    auto* addBtn = button(QStringLiteral("Escolher disco"), QStringLiteral("plus"), true);
-    connect(addBtn, &QPushButton::clicked, this, [this] {
-        AddVaultDialog dlg(this);
-        if (dlg.exec() == QDialog::Accepted)
-            AppContext::instance().reload();
-    });
-    av->addWidget(addBtn, 0, Qt::AlignLeft);
+    auto* addRow = new QHBoxLayout;
+    for (bool network : {false, true}) {
+        auto* b = button(network ? QStringLiteral("Pasta na rede") : QStringLiteral("Escolher disco"),
+                         network ? QStringLiteral("folder") : QStringLiteral("plus"), !network);
+        connect(b, &QPushButton::clicked, this, [this, network] {
+            AddVaultDialog dlg(this, network);
+            if (dlg.exec() == QDialog::Accepted)
+                AppContext::instance().reload();
+        });
+        addRow->addWidget(b);
+    }
+    addRow->addStretch(1);
+    av->addLayout(addRow);
     grid->addWidget(add, i / 2, i % 2);
     grid->setColumnStretch(0, 1);
     grid->setColumnStretch(1, 1);

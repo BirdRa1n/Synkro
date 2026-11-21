@@ -1,4 +1,5 @@
 #include "AppContext.h"
+#include "Dialogs.h"
 #include "Format.h"
 #include "Pages.h"
 #include "Theme.h"
@@ -44,6 +45,20 @@ RestorePage::RestorePage()
     : Page(QStringLiteral("Restaurar"),
            QStringLiteral("Recupera arquivos ou bancos de qualquer cofre conectado — inclusive de outro computador"))
 {
+    auto* network = button(QStringLiteral("Cofre em rede…"), QStringLiteral("folder"));
+    connect(network, &QPushButton::clicked, this, [this] {
+        OpenNetworkVaultDialog dlg(this);
+        if (dlg.exec() != QDialog::Accepted)
+            return;
+        const std::wstring loc = dlg.location();
+        if (std::none_of(m_opened.begin(), m_opened.end(), [&](const auto& o) { return o.first == loc; }))
+            m_opened.emplace_back(loc, dlg.vaultLabel());
+        refresh();
+        const int idx = m_vault->findData(fmt::q(loc));
+        if (idx >= 0)
+            m_vault->setCurrentIndex(idx);
+    });
+    actions()->addWidget(network);
     auto* reload = button(QStringLiteral("Procurar cofres"), QStringLiteral("refresh"));
     connect(reload, &QPushButton::clicked, this, [this] { refresh(); });
     actions()->addWidget(reload);
@@ -127,7 +142,8 @@ void RestorePage::refresh()
     m_vault->clear();
     for (const auto& v : synkro::vault::discoverVaults())
         m_vault->addItem(v.identity.label + QStringLiteral("  —  ") + fmt::q(v.location), fmt::q(v.location));
-    // Cofres-pasta declarados na configuração (não aparecem na varredura de volumes).
+    // Cofres-pasta e em rede declarados na configuração (não aparecem na
+    // varredura de volumes).
     for (const auto& obs : AppContext::instance().vaults()) {
         if (obs.connected && m_vault->findData(fmt::q(obs.location)) < 0) {
             const auto* vc = AppContext::instance().config().global.findVault(obs.id);
@@ -135,11 +151,17 @@ void RestorePage::refresh()
                              fmt::q(obs.location));
         }
     }
+    // Abertos à mão nesta sessão (inclusive sem configuração, num PDV novo).
+    for (const auto& [loc, name] : m_opened) {
+        if (m_vault->findData(fmt::q(loc)) < 0)
+            m_vault->addItem(name + QStringLiteral("  —  ") + fmt::q(loc) + QStringLiteral("  (rede)"), fmt::q(loc));
+    }
     const int idx = m_vault->findData(previous);
     m_vault->setCurrentIndex(idx >= 0 ? idx : 0);
     m_vault->blockSignals(false);
     if (m_vault->count() == 0)
-        m_hint->setText(QStringLiteral("Nenhum cofre conectado. Conecte um disco de backup e clique em Procurar cofres."));
+        m_hint->setText(QStringLiteral("Nenhum cofre conectado. Conecte um disco de backup e clique em Procurar cofres, "
+                                       "ou abra um cofre num NAS em Cofre em rede…"));
     loadJobs();
 }
 

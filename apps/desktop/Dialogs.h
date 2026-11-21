@@ -23,16 +23,27 @@ class QTimeEdit;
 class QTimer;
 class QVBoxLayout;
 
-// Adicionar um disco como cofre: escolha, checagem (architecture.md §3.1),
-// inicialização e registro em synkro.yml.
+// Adicionar um cofre: disco desta máquina ou pasta na rede (NAS/servidor).
+// Escolha, checagem (architecture.md §3.1 e §3.3.1), inicialização e registro
+// em synkro.yml; em rede, a senha vai para o cofre de segredos.
 class AddVaultDialog : public QDialog {
     Q_OBJECT
 public:
-    explicit AddVaultDialog(QWidget* parent = nullptr);
+    explicit AddVaultDialog(QWidget* parent = nullptr, bool network = false);
 
 private:
     void runCheck();
     void initialize();
+    bool network() const;
+    void updateKind();
+    QComboBox* m_kind;
+    QWidget* m_diskGroup;
+    QWidget* m_netGroup;
+    QLineEdit* m_unc;
+    QLineEdit* m_netUser;
+    QLineEdit* m_netPassword;
+    QLabel* m_intro;
+    class QFormLayout* m_nameForm;
     QComboBox* m_drive;
     QLineEdit* m_label;
     QCheckBox* m_rotation;
@@ -42,6 +53,27 @@ private:
     bool m_accepted = false;
     bool m_hasWarnings = false;
     std::wstring m_mountPoint;
+    std::wstring m_checkedPath; // caminho examinado na última verificação
+};
+
+// Abrir um cofre numa pasta de rede para restaurar (inclusive de um
+// computador novo, sem configuração): caminho, usuário e senha.
+class OpenNetworkVaultDialog : public QDialog {
+    Q_OBJECT
+public:
+    explicit OpenNetworkVaultDialog(QWidget* parent = nullptr);
+    std::wstring location() const { return m_location; }
+    QString vaultLabel() const { return m_vaultLabel; }
+
+private:
+    void open();
+    QLineEdit* m_unc;
+    QLineEdit* m_user;
+    QLineEdit* m_password;
+    QLabel* m_status;
+    class QPushButton* m_openButton;
+    std::wstring m_location;
+    QString m_vaultLabel;
 };
 
 // Assistente de criação de tarefa (arquivos ou banco de dados).

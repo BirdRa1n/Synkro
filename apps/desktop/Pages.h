@@ -76,6 +76,8 @@ private:
     class QLineEdit* m_targetDb = nullptr;
     class QLineEdit* m_pathFilter = nullptr;
     bool m_isDatabase = false;
+    // Cofres em rede abertos nesta sessão ("Cofre em rede…"): localização -> nome.
+    std::vector<std::pair<std::wstring, QString>> m_opened;
 };
 
 // Início automático na bandeja ("synkro-desktop --tray") pela chave Run do Windows.

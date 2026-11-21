@@ -23,6 +23,8 @@ AppContext::AppContext() : m_configDir(synkro::config::defaultConfigDirectory())
     // A avaliação dos cofres roda na thread da interface: um NAS desligado não
     // pode congelar a janela. O worker usa o padrão (3 s).
     synkro::win::setSmbProbeTimeout(800);
+    // Na sessão do usuário, nunca derrubar uma unidade de rede que ele mapeou.
+    synkro::win::setReplaceConflictingConnections(false);
     auto st = synkro::StateStore::open(synkro::stateDatabaseFile());
     if (st)
         m_state.emplace(std::move(st).value());

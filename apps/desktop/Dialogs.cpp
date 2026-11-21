@@ -14,6 +14,7 @@
 #include "core/RunId.h"
 #include "database/Drivers.h"
 #include "database/Tools.h"
+#include "platform/windows/NetworkShare.h"
 #include "platform/windows/TaskScheduler.h"
 #include "platform/windows/Win32.h"
 #include "secrets/SecretStore.h"
@@ -119,18 +120,25 @@ QLabel* title(const QString& t)
 // AddVaultDialog
 // ============================================================================
 
-AddVaultDialog::AddVaultDialog(QWidget* parent) : QDialog(parent)
+AddVaultDialog::AddVaultDialog(QWidget* parent, bool network) : QDialog(parent)
 {
-    setWindowTitle(QStringLiteral("Adicionar disco como cofre"));
-    resize(720, 640);
+    setWindowTitle(QStringLiteral("Adicionar cofre"));
+    resize(720, 680);
     auto* v = new QVBoxLayout(this);
     v->setContentsMargins(24, 22, 24, 22);
     v->setSpacing(12);
-    v->addWidget(title(QStringLiteral("Escolha o disco")));
-    v->addWidget(label(QStringLiteral("O disco precisa ser diferente do disco de origem e dos outros cofres. Nada é apagado: o "
-                                      "Synkro cria apenas a pasta SynkroVault."),
-                       "muted"));
+    v->addWidget(title(QStringLiteral("Onde fica o cofre")));
+    m_kind = new QComboBox;
+    m_kind->addItem(QStringLiteral("Disco desta máquina (interno ou USB)"));
+    m_kind->addItem(QStringLiteral("Pasta na rede (NAS ou servidor)"));
+    v->addWidget(m_kind);
+    m_intro = label(QString(), "muted");
+    v->addWidget(m_intro);
 
+    // Disco local.
+    m_diskGroup = new QWidget;
+    auto* dl = new QVBoxLayout(m_diskGroup);
+    dl->setContentsMargins(0, 0, 0, 0);
     m_drive = new QComboBox;
     for (const auto& s : QStorageInfo::mountedVolumes()) {
         if (!s.isValid() || !s.isReady() || s.isReadOnly())
@@ -141,17 +149,42 @@ AddVaultDialog::AddVaultDialog(QWidget* parent) : QDialog(parent)
                                   QString::fromLatin1(s.fileSystemType()), fmt::bytes(static_cast<std::uint64_t>(s.bytesTotal()))),
                          root);
     }
-    v->addWidget(m_drive);
+    dl->addWidget(m_drive);
+    v->addWidget(m_diskGroup);
+
+    // Pasta na rede.
+    m_netGroup = new QWidget;
+    auto* nf = new QFormLayout(m_netGroup);
+    nf->setContentsMargins(0, 0, 0, 0);
+    nf->setHorizontalSpacing(16);
+    m_unc = new QLineEdit;
+    m_unc->setPlaceholderText(QStringLiteral("\\\\nas01\\backup\\pdv01"));
+    m_netUser = new QLineEdit;
+    m_netUser->setPlaceholderText(QStringLiteral("nas01\\synkro  (vazio: conta do computador, em domínio)"));
+    m_netPassword = new QLineEdit;
+    m_netPassword->setEchoMode(QLineEdit::Password);
+    // Rótulos com a mesma largura nos dois formulários, para os campos alinharem.
+    auto formLabel = [](const QString& text) {
+        auto* l = new QLabel(text);
+        l->setMinimumWidth(230);
+        return l;
+    };
+    nf->addRow(formLabel(QStringLiteral("Pasta (caminho UNC)")), m_unc);
+    nf->addRow(formLabel(QStringLiteral("Usuário do compartilhamento")), m_netUser);
+    nf->addRow(formLabel(QStringLiteral("Senha")), m_netPassword);
+    v->addWidget(m_netGroup);
 
     auto* form = new QFormLayout;
+    form->setHorizontalSpacing(16);
+    m_nameForm = form;
     m_label = new QLineEdit;
     m_label->setPlaceholderText(QStringLiteral("ex.: HD Externo 1 (Seagate 2 TB)"));
     m_rotation = new QCheckBox(QStringLiteral("Disco de rodízio (sai do local; a ausência é esperada por alguns dias)"));
-    form->addRow(QStringLiteral("Nome do cofre"), m_label);
-    form->addRow(QString(), m_rotation);
+    form->addRow(formLabel(QStringLiteral("Nome do cofre")), m_label);
+    form->addRow(formLabel(QString()), m_rotation);
     v->addLayout(form);
 
-    auto* check = ui::button(QStringLiteral("Verificar disco"), QStringLiteral("check"));
+    auto* check = ui::button(QStringLiteral("Verificar"), QStringLiteral("check"));
     connect(check, &QPushButton::clicked, this, [this] { runCheck(); });
     v->addWidget(check, 0, Qt::AlignLeft);
 
@@ -159,8 +192,18 @@ AddVaultDialog::AddVaultDialog(QWidget* parent) : QDialog(parent)
     m_findings = new QVBoxLayout(box);
     m_findings->setContentsMargins(16, 14, 16, 14);
     m_findings->setSpacing(10);
-    m_findings->addWidget(label(QStringLiteral("Clique em Verificar disco."), "muted"));
+    m_findings->addWidget(label(QStringLiteral("Clique em Verificar."), "muted"));
     v->addWidget(box, 1);
+
+    connect(m_kind, &QComboBox::currentIndexChanged, this, [this] { updateKind(); });
+    // Mudou o alvo depois de verificar: precisa verificar de novo.
+    auto invalidate = [this] {
+        m_accepted = false;
+        m_initButton->setEnabled(false);
+    };
+    connect(m_drive, &QComboBox::currentIndexChanged, this, invalidate);
+    connect(m_unc, &QLineEdit::textEdited, this, invalidate);
+    connect(m_netUser, &QLineEdit::textEdited, this, invalidate);
 
     m_acceptWarnings = new QCheckBox(QStringLiteral("Li os avisos e quero usar este disco mesmo assim"));
     m_acceptWarnings->hide();
@@ -177,12 +220,57 @@ AddVaultDialog::AddVaultDialog(QWidget* parent) : QDialog(parent)
     buttons->addWidget(cancel);
     buttons->addWidget(m_initButton);
     v->addLayout(buttons);
+    if (network)
+        m_kind->setCurrentIndex(1); // dispara updateKind()
+    else
+        updateKind();
+}
+
+bool AddVaultDialog::network() const
+{
+    return m_kind->currentIndex() == 1;
+}
+
+void AddVaultDialog::updateKind()
+{
+    const bool net = network();
+    m_diskGroup->setVisible(!net);
+    m_netGroup->setVisible(net);
+    m_nameForm->setRowVisible(m_rotation, !net); // a linha inteira, sem deixar vão
+    if (net)
+        m_rotation->setChecked(false);
+    m_intro->setText(net ? QStringLiteral("Uma pasta num NAS ou servidor protege contra a perda deste PDV inteiro (defeito, roubo, "
+                                          "incêndio). Use uma pasta por PDV e um usuário só do Synkro, com permissão de gravação. "
+                                          "A senha fica no cofre de segredos desta máquina.")
+                         : QStringLiteral("O disco precisa ser diferente do disco de origem e dos outros cofres. Nada é apagado: "
+                                          "o Synkro cria apenas a pasta SynkroVault."));
+    m_label->setPlaceholderText(net ? QStringLiteral("ex.: NAS do escritório") : QStringLiteral("ex.: HD Externo 1 (Seagate 2 TB)"));
+    m_accepted = false;
+    m_initButton->setEnabled(false);
+    clearLayout(m_findings);
+    m_findings->addWidget(label(QStringLiteral("Clique em Verificar."), "muted"));
 }
 
 void AddVaultDialog::runCheck()
 {
     synkro::vault::CandidateRequest req;
-    req.candidatePath = m_drive->currentData().toString().toStdWString();
+    std::wstring user;
+    std::string password;
+    if (network()) {
+        const std::wstring path = QDir::toNativeSeparators(m_unc->text().trimmed()).toStdWString();
+        if (!synkro::win::isUncPath(path)) {
+            QMessageBox::information(this, windowTitle(),
+                                     QStringLiteral("Informe a pasta como \\\\servidor\\compartilhamento\\pasta. Letras de "
+                                                    "unidade mapeadas (Z:) não servem: o serviço do Synkro não as enxerga."));
+            return;
+        }
+        req.candidatePath = synkro::win::normalizeUnc(path);
+        user = m_netUser->text().trimmed().toStdWString();
+        password = m_netPassword->text().toStdString();
+    } else {
+        req.candidatePath = m_drive->currentData().toString().toStdWString();
+    }
+    m_checkedPath = req.candidatePath;
     const auto& set = AppContext::instance().config();
     for (const auto& j : set.jobs) {
         if (j.type == "files")
@@ -198,11 +286,15 @@ void AddVaultDialog::runCheck()
     clearLayout(m_findings);
     m_findings->addWidget(label(QStringLiteral("Verificando (inclui um teste de gravação de 1 MB)…"), "muted"));
     m_initButton->setEnabled(false);
+    // Resultado da conexão com o compartilhamento (vazio = sem problema).
+    auto connectNote = std::make_shared<std::string>();
     auto* watcher = new QFutureWatcher<synkro::vault::CandidateReport>(this);
-    connect(watcher, &QFutureWatcher<synkro::vault::CandidateReport>::finished, this, [this, watcher] {
+    connect(watcher, &QFutureWatcher<synkro::vault::CandidateReport>::finished, this, [this, watcher, connectNote] {
         const auto report = watcher->result();
         watcher->deleteLater();
         clearLayout(m_findings);
+        if (!connectNote->empty())
+            m_findings->addWidget(label(fmt::q(*connectNote), "muted"));
         for (const auto& f : report.findings) {
             auto* row = new QHBoxLayout;
             row->setSpacing(12);
@@ -221,18 +313,41 @@ void AddVaultDialog::runCheck()
         m_findings->addStretch(1);
         m_accepted = report.accepted();
         m_hasWarnings = report.hasWarnings();
-        m_mountPoint = report.volume.mountPoint;
-        if (report.volume.kind == synkro::win::DriveKind::Removable)
+        const bool net = synkro::win::isUncPath(m_checkedPath);
+        // Em rede o cofre fica na própria pasta; num disco, na raiz do volume.
+        m_mountPoint = net ? m_checkedPath : report.volume.mountPoint;
+        if (!net && report.volume.kind == synkro::win::DriveKind::Removable)
             m_rotation->setChecked(true);
-        if (m_label->text().isEmpty() && !report.volume.label.empty())
-            m_label->setText(fmt::q(report.volume.label));
+        if (m_label->text().isEmpty()) {
+            if (net)
+                m_label->setText(QStringLiteral("Pasta em rede (%1)").arg(QString::fromStdWString(synkro::win::uncServer(m_checkedPath))));
+            else if (!report.volume.label.empty())
+                m_label->setText(fmt::q(report.volume.label));
+        }
         m_acceptWarnings->setVisible(m_accepted && m_hasWarnings);
         m_acceptWarnings->setChecked(false);
         m_initButton->setEnabled(m_accepted && !m_hasWarnings);
         if (!m_accepted)
-            m_findings->addWidget(label(QStringLiteral("Este disco não pode ser usado como cofre."), "fact"));
+            m_findings->addWidget(label(net ? QStringLiteral("Esta pasta não pode ser usada como cofre.")
+                                            : QStringLiteral("Este disco não pode ser usado como cofre."),
+                                        "fact"));
     });
-    watcher->setFuture(QtConcurrent::run([req] { return synkro::vault::checkCandidate(req); }));
+    auto secret = std::make_shared<std::string>(password);
+    watcher->setFuture(QtConcurrent::run([req, user, secret, connectNote] {
+        // Conecta na sessão do usuário com a credencial digitada (sem derrubar
+        // uma conexão que ele já tenha com o servidor).
+        if (!user.empty() && synkro::win::probeSmbServer(synkro::win::uncServer(req.candidatePath))) {
+            auto st = synkro::win::connectShare(req.candidatePath, user, *secret, /*replaceConflicting=*/false);
+            if (!st && st.error().code == synkro::ErrorCode::AlreadyExists)
+                *connectNote = "Esta sessão já tem uma conexão com o servidor usando outro usuário; a verificação usa essa "
+                               "conexão. O serviço do Synkro usará o usuário informado.";
+            else if (!st)
+                *connectNote = "Não foi possível entrar com o usuário informado: " + st.error().message;
+        }
+        synkro::wipe(*secret);
+        return synkro::vault::checkCandidate(req);
+    }));
+    synkro::wipe(password);
 }
 
 void AddVaultDialog::initialize()
@@ -267,8 +382,25 @@ void AddVaultDialog::initialize()
     vc.vaultId = vaultId.toStdString();
     vc.label = name.toStdString();
     vc.path = m_mountPoint;
-    vc.rotation = m_rotation->isChecked();
+    vc.network = synkro::win::isUncPath(m_mountPoint);
+    vc.rotation = !vc.network && m_rotation->isChecked();
     vc.maxAbsenceSeconds = vc.rotation ? 7 * 86400 : 86400;
+
+    // Cofre em rede: a senha vai para o cofre de segredos (nunca para o YAML).
+    QString secretWarning;
+    if (vc.network && !m_netUser->text().trimmed().isEmpty()) {
+        vc.netUser = m_netUser->text().trimmed().toStdString();
+        const std::string secretName = "cofre-" + id;
+        vc.netPassword = {synkro::config::SecretRef::Kind::Secret, secretName};
+        std::string value = m_netPassword->text().toStdString();
+        auto st = synkro::SecretStore(synkro::secretsFile()).set(secretName, value);
+        synkro::wipe(value);
+        if (!st)
+            secretWarning = QStringLiteral("\n\nA senha não pôde ser guardada (%1). Cadastre-a em Configurações → Segredos com o "
+                                           "nome \"%2\" (requer administrador).")
+                                .arg(fmt::q(st.error().message), fmt::q(secretName));
+    }
+    m_netPassword->clear();
 
     const std::string current = ctx.readConfigFile(L"synkro.yml");
     if (current.empty() || synkro::config::isPristineGenerated(current)) {
@@ -280,12 +412,20 @@ void AddVaultDialog::initialize()
                                                                     "não pôde ser gravada: %2").arg(vaultId, fmt::q(st.error().message)));
             return;
         }
-        QMessageBox::information(this, windowTitle(), QStringLiteral("Cofre \"%1\" pronto e adicionado à configuração.").arg(name));
+        QMessageBox::information(this, windowTitle(),
+                                 QStringLiteral("Cofre \"%1\" pronto e adicionado à configuração.").arg(name) + secretWarning);
     } else {
         // synkro.yml editado à mão: o desktop não regrava; mostra o trecho a incluir.
-        const QString snippet = QStringLiteral("  - id: %1\n    vault_id: %2\n    label: \"%3\"\n    path: \"%4\"\n    rotation: %5\n")
-                                    .arg(fmt::q(id), vaultId, name, fmt::q(m_mountPoint).replace('\\', '/'),
-                                         vc.rotation ? QStringLiteral("true") : QStringLiteral("false"));
+        QString snippet = QStringLiteral("  - id: %1\n    vault_id: %2\n    label: \"%3\"\n    path: \"%4\"\n")
+                              .arg(fmt::q(id), vaultId, name, fmt::q(m_mountPoint).replace('\\', '/'));
+        if (vc.network) {
+            if (!vc.netUser.empty())
+                snippet += QStringLiteral("    credentials:\n      user: \"%1\"\n      password: { secret: %2 }\n")
+                               .arg(fmt::q(vc.netUser).replace('\\', QStringLiteral("\\\\")), fmt::q(vc.netPassword.name));
+        } else {
+            snippet += QStringLiteral("    rotation: %1\n").arg(vc.rotation ? QStringLiteral("true") : QStringLiteral("false"));
+        }
+        snippet += secretWarning;
         QMessageBox box(QMessageBox::Information, windowTitle(),
                         QStringLiteral("Cofre criado no disco. Como o synkro.yml foi editado à mão, inclua este trecho na lista "
                                        "vaults (o editor será aberto):\n\n") + snippet,
@@ -295,6 +435,104 @@ void AddVaultDialog::initialize()
         editor.exec();
     }
     accept();
+}
+
+// ============================================================================
+// OpenNetworkVaultDialog
+// ============================================================================
+
+OpenNetworkVaultDialog::OpenNetworkVaultDialog(QWidget* parent) : QDialog(parent)
+{
+    setWindowTitle(QStringLiteral("Abrir cofre em rede"));
+    resize(560, 300);
+    auto* v = new QVBoxLayout(this);
+    v->setContentsMargins(24, 22, 24, 22);
+    v->setSpacing(12);
+    v->addWidget(title(QStringLiteral("Cofre numa pasta da rede")));
+    v->addWidget(label(QStringLiteral("Funciona também num computador novo, sem configuração: o cofre tem tudo o que é preciso "
+                                      "para restaurar. Nada é gravado no NAS."),
+                       "muted"));
+    auto* form = new QFormLayout;
+    m_unc = new QLineEdit;
+    m_unc->setPlaceholderText(QStringLiteral("\\\\nas01\\backup\\pdv01"));
+    m_user = new QLineEdit;
+    m_user->setPlaceholderText(QStringLiteral("vazio: usa a sessão atual do Windows"));
+    m_password = new QLineEdit;
+    m_password->setEchoMode(QLineEdit::Password);
+    form->addRow(QStringLiteral("Pasta (caminho UNC)"), m_unc);
+    form->addRow(QStringLiteral("Usuário"), m_user);
+    form->addRow(QStringLiteral("Senha"), m_password);
+    v->addLayout(form);
+    m_status = label(QString(), "muted");
+    m_status->setWordWrap(true);
+    v->addWidget(m_status);
+    v->addStretch(1);
+
+    auto* buttons = new QHBoxLayout;
+    buttons->addStretch(1);
+    auto* cancel = ui::button(QStringLiteral("Cancelar"));
+    connect(cancel, &QPushButton::clicked, this, &QDialog::reject);
+    m_openButton = ui::button(QStringLiteral("Abrir"), QStringLiteral("folder"), true);
+    connect(m_openButton, &QPushButton::clicked, this, [this] { open(); });
+    buttons->addWidget(cancel);
+    buttons->addWidget(m_openButton);
+    v->addLayout(buttons);
+}
+
+void OpenNetworkVaultDialog::open()
+{
+    const std::wstring path = QDir::toNativeSeparators(m_unc->text().trimmed()).toStdWString();
+    if (!synkro::win::isUncPath(path)) {
+        m_status->setText(QStringLiteral("Informe a pasta como \\\\servidor\\compartilhamento\\pasta."));
+        return;
+    }
+    const std::wstring unc = synkro::win::normalizeUnc(path);
+    const std::wstring user = m_user->text().trimmed().toStdWString();
+    auto secret = std::make_shared<std::string>(m_password->text().toStdString());
+    m_password->clear();
+    m_openButton->setEnabled(false);
+    m_status->setText(QStringLiteral("Conectando…"));
+
+    struct Outcome {
+        std::string error;
+        QString label;
+    };
+    auto* watcher = new QFutureWatcher<Outcome>(this);
+    connect(watcher, &QFutureWatcher<Outcome>::finished, this, [this, watcher, unc] {
+        const Outcome o = watcher->result();
+        watcher->deleteLater();
+        m_openButton->setEnabled(true);
+        if (!o.error.empty()) {
+            m_status->setText(fmt::q(o.error));
+            return;
+        }
+        m_location = unc;
+        m_vaultLabel = o.label;
+        accept();
+    });
+    watcher->setFuture(QtConcurrent::run([unc, user, secret]() -> Outcome {
+        Outcome o;
+        if (auto st = synkro::win::probeSmbServer(synkro::win::uncServer(unc), 5000); !st) {
+            synkro::wipe(*secret);
+            return {st.error().message, {}};
+        }
+        if (!user.empty()) {
+            auto st = synkro::win::connectShare(unc, user, *secret, /*replaceConflicting=*/false);
+            if (!st && st.error().code != synkro::ErrorCode::AlreadyExists) {
+                synkro::wipe(*secret);
+                return {st.error().message, {}};
+            }
+        }
+        synkro::wipe(*secret);
+        auto id = synkro::vault::readIdentity(unc);
+        if (!id)
+            return {id.error().code == synkro::ErrorCode::NotFound
+                        ? "Não há cofre do Synkro nesta pasta (procure a pasta que contém SynkroVault)."
+                        : id.error().message,
+                    {}};
+        o.label = id.value().label;
+        return o;
+    }));
 }
 
 // ============================================================================
@@ -803,7 +1041,7 @@ ImportConfigDialog::ImportConfigDialog(QWidget* parent) : QDialog(parent)
     v->addWidget(title(QStringLiteral("Importar de outro PDV")));
     v->addWidget(label(QStringLiteral("O pacote traz as tarefas e as preferências, sem senhas e sem a identidade dos discos. "
                                       "Ligue cada cofre do pacote a um disco desta máquina já preparado como cofre "
-                                      "(Cofres → Adicionar disco). Nada é gravado sem uma simulação válida."),
+                                      "(Cofres → Adicionar cofre). Nada é gravado sem uma simulação válida."),
                        "muted"));
 
     auto* pick = ui::button(QStringLiteral("Escolher pacote…"), QStringLiteral("folder"));
@@ -902,7 +1140,7 @@ void ImportConfigDialog::choosePackage()
         m_vaultRows->addLayout(row);
     }
     if (connected.empty())
-        m_vaultRows->addWidget(label(QStringLiteral("Nenhum cofre conectado. Prepare os discos em Cofres → Adicionar disco."),
+        m_vaultRows->addWidget(label(QStringLiteral("Nenhum cofre conectado. Prepare os discos em Cofres → Adicionar cofre."),
                                      "muted"));
 }
 

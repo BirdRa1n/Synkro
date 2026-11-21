@@ -13,7 +13,11 @@
 #include <QButtonGroup>
 #include <QCloseEvent>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QHBoxLayout>
+#include <QLabel>
+#include <QLineEdit>
+#include <QPushButton>
 #include <QMenu>
 #include <QStackedWidget>
 #include <QTimer>
@@ -282,6 +286,59 @@ void MainWindow::saveScreenshots(const QString& dir)
     {
         AddVaultDialog add(this);
         shoot(&add, QStringLiteral("9-adicionar-disco.png"));
+    }
+    {
+        AddVaultDialog add(this, /*network=*/true);
+        shoot(&add, QStringLiteral("9-adicionar-rede.png"));
+        // Verificação de verdade, com a pasta temporária pelo compartilhamento
+        // administrativo desta máquina (deve ser recusada: é a própria máquina).
+        const QString temp = QDir::toNativeSeparators(QDir::tempPath());
+        const QString unc = QStringLiteral("\\\\localhost\\") + temp.left(1) + QStringLiteral("$") + temp.mid(2);
+        const auto edits = add.findChildren<QLineEdit*>();
+        if (!edits.isEmpty()) {
+            edits.front()->setText(unc);
+            add.show();
+            for (auto* b : add.findChildren<QPushButton*>())
+                if (b->text() == QStringLiteral("Verificar"))
+                    b->click();
+            QElapsedTimer t;
+            t.start();
+            while (t.elapsed() < 20000) { // espera a checagem em segundo plano
+                QApplication::processEvents(QEventLoop::AllEvents, 100);
+                bool done = false;
+                for (auto* l : add.findChildren<QLabel*>())
+                    done = done || l->text().contains(QStringLiteral("não pode ser usada"))
+                           || l->text().contains(QStringLiteral("Teste de gravação"));
+                if (done)
+                    break;
+            }
+            shoot(&add, QStringLiteral("9-adicionar-rede-verificado.png"));
+        }
+    }
+    {
+        OpenNetworkVaultDialog open(this);
+        shoot(&open, QStringLiteral("11-abrir-cofre-rede.png"));
+        // Pasta acessível, mas sem cofre: a mensagem precisa dizer o que procurar.
+        const QString temp = QDir::toNativeSeparators(QDir::tempPath());
+        const auto edits = open.findChildren<QLineEdit*>();
+        if (!edits.isEmpty()) {
+            edits.front()->setText(QStringLiteral("\\\\localhost\\") + temp.left(1) + QStringLiteral("$") + temp.mid(2));
+            open.show();
+            for (auto* b : open.findChildren<QPushButton*>())
+                if (b->text() == QStringLiteral("Abrir"))
+                    b->click();
+            QElapsedTimer t;
+            t.start();
+            while (t.elapsed() < 20000) {
+                QApplication::processEvents(QEventLoop::AllEvents, 100);
+                bool done = false;
+                for (auto* l : open.findChildren<QLabel*>())
+                    done = done || l->text().contains(QStringLiteral("cofre do Synkro"));
+                if (done)
+                    break;
+            }
+            shoot(&open, QStringLiteral("11-abrir-cofre-rede-sem-cofre.png"));
+        }
     }
     {
         ImportConfigDialog import(this);
