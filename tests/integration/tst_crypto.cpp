@@ -15,6 +15,7 @@
 
 #include "TestFs.h"
 
+#include <QElapsedTimer>
 #include <QTemporaryDir>
 #include <QTest>
 
@@ -263,12 +264,47 @@ private slots:
         QVERIFY(v2);
         QCOMPARE(v2.value().corrupted.size(), std::size_t(1));
 
-        // key.json apagado: esta máquina sabe que o cofre era cifrado e não grava em claro.
-        QVERIFY(::DeleteFileW(win::toExtendedPath(crypto::keyFilePath(env.vault)).c_str()));
+        // As duas cópias do key.json apagadas: esta máquina sabe que o cofre era
+        // cifrado e não grava em claro.
+        const std::wstring root = vault::vaultRoot(env.vault);
+        QVERIFY(::DeleteFileW(win::toExtendedPath(win::joinPath(root, L"key.json")).c_str()));
+        QVERIFY(::DeleteFileW(win::toExtendedPath(win::joinPath(root, L"key.backup.json")).c_str()));
         crypto::forgetRememberedKeys();
         auto r2 = runBackup(env.request());
         QVERIFY(r2.status != RunStatus::Success);
         QVERIFY(r2.vaults[0].error.find("key.json") != std::string::npos);
+    }
+
+    // O key.json fica em duas cópias: perder ou danificar uma não tranca o
+    // cofre, e a cópia ruim é regravada.
+    void keyFileRedundancy()
+    {
+        VaultEnv env;
+        auto enabled = crypto::enableEncryption(env.vault, env.secrets);
+        QVERIFY(enabled);
+        const std::wstring root = vault::vaultRoot(env.vault);
+        const std::wstring primary = win::joinPath(root, L"key.json"), backup = win::joinPath(root, L"key.backup.json");
+        QVERIFY(ops::pathExists(primary) && ops::pathExists(backup));
+
+        QVERIFY(::DeleteFileW(win::toExtendedPath(primary).c_str()));
+        auto key = crypto::unlockWithRecoveryKey(env.vault, enabled.value().recoveryKey);
+        QVERIFY2(key, key ? "" : key.error().message.c_str());
+        QVERIFY(ops::pathExists(primary)); // regravado a partir da cópia
+
+        QVERIFY(writeFile(backup, "{ danificado"));
+        crypto::forgetRememberedKeys();
+        QVERIFY(crypto::cipherFor(env.vault, env.secrets)); // vale a cópia principal
+        QVERIFY(readFile(backup).contains("synkro-vault-key")); // e a danificada foi refeita
+
+        // key.json adulterado com iterações absurdas é recusado, sem travar.
+        QByteArray bad = readFile(primary);
+        bad.replace("200000", "9000000000");
+        QVERIFY(writeFile(primary, bad));
+        QVERIFY(writeFile(backup, bad));
+        QElapsedTimer t;
+        t.start();
+        QVERIFY(!crypto::unlockWithRecoveryKey(env.vault, enabled.value().recoveryKey));
+        QVERIFY(t.elapsed() < 5000);
     }
 
     void cannotEncryptVaultWithData()
