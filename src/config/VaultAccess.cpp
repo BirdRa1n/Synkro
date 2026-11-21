@@ -34,7 +34,8 @@ std::optional<vault::LocatedVault> locateVault(const VaultConfig& v, std::string
             std::string p = std::move(pass).value();
             auto st = win::connectShare(v.path, win::fromUtf8(v.netUser), p);
             wipe(p);
-            if (!st)
+            // Conexão existente com outro usuário (desktop): segue com ela.
+            if (!st && st.error().code != ErrorCode::AlreadyExists)
                 return fail(st.error().message);
         }
         // Sem acesso ao secrets.dat (usuário comum): segue com a sessão atual.

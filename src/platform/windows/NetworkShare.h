@@ -33,6 +33,16 @@ void setSmbProbeTimeout(int timeoutMs);
 // credenciais do usuário). A conexão vale para a sessão de logon do processo;
 // chamar de novo é barato. Usuário vazio: nada a fazer (vale a conta do
 // computador ou a sessão atual).
-Status connectShare(const std::wstring& uncPath, const std::wstring& user, const std::string& passwordUtf8);
+//
+// `replaceConflicting`: se já houver conexão com o servidor usando outro
+// usuário (ERROR_SESSION_CREDENTIAL_CONFLICT), desfaz e refaz. O worker usa
+// (sessão do SYSTEM); o desktop não, para não derrubar uma unidade mapeada
+// pelo usuário: devolve AlreadyExists e quem chamou tenta com a conexão atual.
+Status connectShare(const std::wstring& uncPath, const std::wstring& user, const std::string& passwordUtf8,
+                    bool replaceConflicting = true);
+
+// Política do processo: false impede connectShare de desfazer conexões
+// existentes, mesmo com replaceConflicting = true (o desktop chama no início).
+void setReplaceConflictingConnections(bool allow);
 
 } // namespace synkro::win

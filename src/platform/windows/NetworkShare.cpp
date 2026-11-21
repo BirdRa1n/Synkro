@@ -22,6 +22,7 @@ std::mutex g_mutex;
 std::map<std::wstring, qint64> g_unreachable; // servidor (minúsculas) -> momento da falha (ms)
 std::map<std::wstring, std::wstring> g_connected; // raiz do compartilhamento -> usuário
 std::atomic<int> g_probeTimeoutMs{3000};
+std::atomic<bool> g_allowReplace{true};
 
 std::string describeNetError(DWORD code, const std::wstring& root)
 {
@@ -117,6 +118,11 @@ bool isThisComputer(const std::wstring& server)
     return std::any_of(mine.begin(), mine.end(), [&](const QHostAddress& a) { return a.isEqual(addr); });
 }
 
+void setReplaceConflictingConnections(bool allow)
+{
+    g_allowReplace = allow;
+}
+
 void setSmbProbeTimeout(int timeoutMs)
 {
     g_probeTimeoutMs = std::clamp(timeoutMs, 100, 30000);
@@ -157,10 +163,12 @@ Status probeSmbServer(const std::wstring& server, int timeoutMs)
                                 : "o servidor " + toUtf8(server) + " não responde (porta 445 do compartilhamento de arquivos)");
 }
 
-Status connectShare(const std::wstring& uncPath, const std::wstring& user, const std::string& passwordUtf8)
+Status connectShare(const std::wstring& uncPath, const std::wstring& user, const std::string& passwordUtf8,
+                    bool replaceConflicting)
 {
     if (user.empty())
         return Status::success();
+    replaceConflicting = replaceConflicting && g_allowReplace;
     const std::wstring root = uncShareRoot(uncPath);
     {
         std::lock_guard<std::mutex> g(g_mutex);
@@ -175,6 +183,10 @@ Status connectShare(const std::wstring& uncPath, const std::wstring& user, const
     nr.lpRemoteName = const_cast<wchar_t*>(root.c_str());
     // Sem letra de unidade e sem CONNECT_UPDATE_PROFILE: nada fica gravado no perfil.
     DWORD rc = ::WNetAddConnection2W(&nr, password.c_str(), user.c_str(), CONNECT_TEMPORARY);
+    if (rc == ERROR_SESSION_CREDENTIAL_CONFLICT && !replaceConflicting) {
+        ::SecureZeroMemory(password.data(), password.size() * sizeof(wchar_t));
+        return Error::make(ErrorCode::AlreadyExists, describeNetError(rc, root), rc);
+    }
     if (rc == ERROR_SESSION_CREDENTIAL_CONFLICT) {
         // Conexão antiga com outra credencial (ex.: senha trocada): refaz.
         ::WNetCancelConnection2W(root.c_str(), 0, FALSE);
