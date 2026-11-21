@@ -107,9 +107,10 @@ No Qt Creator basta abrir o `CMakeLists.txt` da raiz.
 
 `synkro-desktop.exe` é a interface para o dia a dia: mostra a situação dos backups, cadastra discos como cofres (com a checagem de disco físico, sistema de arquivos e gravação), cria tarefas pelo assistente, edita os YAMLs com validação ao vivo e o painel "O que esta tarefa vai fazer", gerencia segredos, executa tarefas e restaura arquivos ou bancos de qualquer cofre conectado — inclusive de outro computador.
 
+- Sempre roda como administrador (pede o UAC ao abrir pelo menu Iniciar). No logon, a tarefa `\Synkro\Desktop` o abre na bandeja já elevado, sem pedido.
 - Fechar a janela mantém o Synkro na bandeja; o ícone fica verde, amarelo ou vermelho conforme os alertas.
 - `synkro-desktop --tray` inicia direto na bandeja.
-- Registrar as tarefas no Agendador pede confirmação de administrador (UAC).
+- Cofres podem ser removidos da configuração (Cofres → Remover), com a opção de apagar os backups do disco digitando o nome do cofre.
 - Arquivos YAML gerados pelo desktop podem ser editados à mão: a partir daí o desktop os abre no editor e nunca os regrava.
 
 ## Uso do worker

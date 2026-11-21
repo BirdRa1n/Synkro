@@ -48,7 +48,7 @@ O que o `install.ps1` faz, em ordem:
 3. copia os programas para `C:\Program Files\Synkro` (espelho da pasta do pacote);
 4. cria `C:\ProgramData\Synkro` com as permissões da seção 2 (e move o estado de versões antigas para `state\`);
 5. registra a origem **Synkro** no Visualizador de Eventos (log *Aplicativo*);
-6. liga o **início automático na bandeja** para todos os usuários (`HKLM\...\Run`, `synkro-desktop --tray`) — `-NoAutostart` desliga;
+6. liga o **início automático na bandeja**, já como administrador: tarefa `\Synkro\Desktop` do Agendador, ao fazer logon (`-NoAutostart` desliga). O Synkro Desktop **sempre roda como administrador**: ele cadastra cofres, grava a configuração e os segredos e registra as tarefas. Por isso o Windows não o iniciaria pela chave `Run`, e quem não é administrador precisa da senha de um administrador para abri-lo;
 7. cria o atalho no menu Iniciar e põe a pasta no `PATH` (para usar `synkro-worker` no prompt);
 8. registra em **Programas e Recursos** (desinstalação pelo Painel de Controle);
 9. se já existir configuração, roda `synkro-worker config apply` (tarefas no Agendador) — `-NoApply` pula.
@@ -133,7 +133,7 @@ Com `schedule_catch_up: true` (padrão), um horário perdido com o PC desligado 
 | `last_run_degraded` | aviso | Algum cofre não recebeu o backup (ex.: desconectado) | Conectar o cofre |
 | `vault_absent` | aviso/crítico | Cofre não visto há mais de `max_absence` (crítico se não for de rodízio) | Conectar o disco |
 | `low_space` | aviso/crítico | Espaço livre abaixo de `free_space_alert` | Ajustar a retenção ou trocar por um disco maior |
-| `disk_health` | aviso/crítico | Disco de cofre com sinais de falha (SMART) | **Trocar o disco** (seção 8) |
+| `disk_health` | aviso/crítico | Disco de cofre com sinais de falha (SMART) | **Trocar o disco** (seção 8.1) |
 | `source_disk_health` | aviso/crítico | O disco da **origem** dá sinais de falha | Urgente: o PDV corre risco; conferir o backup e trocar o disco |
 | `scrub_problems` | crítico | A verificação periódica achou arquivos corrompidos/ausentes que não conseguiu reparar | Rodar `verify` no cofre; considerar trocar o disco |
 | `restore_test_failed` | crítico | O teste de restauração de um banco falhou | `synkro-worker restore-test --job <id>` mostra o detalhe |
@@ -251,7 +251,16 @@ Detalhes em [architecture.md §3.5](architecture.md#35-cofre-cifrado-fase-5).
 
 ---
 
-## 8. Trocar um disco de cofre
+## 8. Remover um cofre
+
+**Cofres → (cartão do cofre) → Remover.**
+
+- **O que muda:** o cofre sai da configuração, ou seja, do `synkro.yml`, dos cofres padrão e de cada tarefa que gravava nele. As tarefas continuam nos outros cofres.
+- **Os backups no disco ficam**, e o disco pode ser cadastrado de novo depois.
+- **Apagar os backups do disco:** com o disco conectado, marque **Também apagar os backups gravados neste disco** e digite o nome do cofre para confirmar. A pasta `SynkroVault` inteira é apagada, e isso não tem volta. Num cofre cifrado, a chave guardada nesta máquina também é apagada.
+- **Quando é recusado:** se uma tarefa ficaria sem nenhum cofre (acrescente outro cofre a ela ou remova a tarefa antes), ou se o `synkro.yml` ou o YAML de uma tarefa foi editado à mão (nesse caso, tire o cofre no editor YAML). Nada é alterado pela metade.
+
+## 8.1. Trocar um disco de cofre
 
 1. Conecte o disco novo e prepare-o (**Cofres → Adicionar disco** ou `vault init`).
 2. No `synkro.yml`, troque o `vault_id` do cofre pelo do disco novo (ou remova o antigo e acrescente o novo pelo desktop).
