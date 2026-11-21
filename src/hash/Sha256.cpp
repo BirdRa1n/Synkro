@@ -116,15 +116,26 @@ Result<Sha256Digest> Sha256::ofFile(const std::wstring& path, bool bypassCache)
     if (!buffer)
         return Error::make(ErrorCode::Internal, "sem memória para buffer de leitura");
 
+    LARGE_INTEGER size{};
+    if (!::GetFileSizeEx(file.get(), &size))
+        return win::lastError("ler o tamanho do arquivo para hash");
+
+    // Para no tamanho do arquivo em vez de ler até receber 0: depois de uma
+    // leitura curta o ponteiro fica desalinhado, e o redirecionador SMB recusa
+    // a leitura seguinte sem cache ("parâmetro incorreto"); o NTFS local aceita.
     Sha256 h;
-    for (;;) {
+    std::uint64_t total = 0;
+    while (total < static_cast<std::uint64_t>(size.QuadPart)) {
         DWORD read = 0;
         if (!::ReadFile(file.get(), buffer.data(), static_cast<DWORD>(buffer.size()), &read, nullptr))
             return win::lastError("ler arquivo para hash");
         if (read == 0)
-            break;
+            break; // encolheu durante a leitura: o hash não vai bater e a cópia é refeita
         if (auto st = h.update(buffer.data(), read); !st)
             return st.error();
+        total += read;
+        if (read < buffer.size())
+            break; // leitura curta: fim do arquivo
     }
     return h.finish();
 }
