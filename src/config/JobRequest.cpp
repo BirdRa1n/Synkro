@@ -1,7 +1,7 @@
 #include "config/JobRequest.h"
 
 #include "platform/windows/Win32.h"
-#include "vault/VaultLocator.h"
+#include "config/VaultAccess.h"
 
 namespace synkro::config {
 
@@ -17,7 +17,7 @@ Result<std::vector<VaultTarget>> resolveVaults(const ConfigSet& set, const JobCo
         VaultTarget target;
         target.expectedVaultId = QString::fromStdString(vc->vaultId);
         target.label = QString::fromStdString(vc->label);
-        if (auto located = vault::locateVault(target.expectedVaultId, vc->path))
+        if (auto located = locateVault(*vc, &target.unavailableReason))
             target.location = located->location;
         out.push_back(std::move(target));
     }

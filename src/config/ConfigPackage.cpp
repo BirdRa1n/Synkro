@@ -4,6 +4,7 @@
 #include "config/ConfigWriter.h"
 #include "core/RunId.h"
 #include "engine/VaultOps.h"
+#include "platform/windows/NetworkShare.h"
 #include "platform/windows/Win32.h"
 #include "secrets/SecretStore.h"
 #include "core/Paths.h"
@@ -209,6 +210,12 @@ Result<ImportReport> importPackage(const ConfigPackage& pkg, const ImportOptions
         if (root.size() == 2 && root[1] == L':')
             root += L'\\';
         v.path = root;
+        v.network = win::isUncPath(root);
+        if (!v.network) {
+            // Ligado a um disco local: as credenciais de rede do pacote não valem.
+            v.netUser.clear();
+            v.netPassword = {};
+        }
     };
 
     // Tarefas do pacote: quais arquivos entram e quais cofres elas usam.

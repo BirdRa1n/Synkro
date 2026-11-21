@@ -1,6 +1,7 @@
 #include "state/Alerts.h"
 
 #include "config/Values.h"
+#include "config/VaultAccess.h"
 #include "platform/windows/DiskHealth.h"
 #include "platform/windows/Volume.h"
 #include "platform/windows/Win32.h"
@@ -65,7 +66,8 @@ std::vector<VaultObservation> observeVaults(const config::ConfigSet& set, StateS
         VaultObservation o;
         o.id = v.id;
         o.vaultId = QString::fromStdString(v.vaultId);
-        if (auto located = vault::locateVault(o.vaultId, v.path)) {
+        o.network = v.network;
+        if (auto located = config::locateVault(v, &o.unavailableReason)) {
             o.connected = true;
             o.location = located->location;
             if (auto vol = win::queryVolume(o.location)) {
@@ -163,7 +165,17 @@ std::vector<AlertRow> computeAlerts(const config::ConfigSet& set, StateStore& st
         }
         const auto seen = state.vaultSeen(o.vaultId);
         const QDateTime lastSeen = seen ? seen->lastSeenAt : QDateTime();
-        if (!lastSeen.isValid())
+        const std::string reason = o.unavailableReason.empty() ? "" : ": " + o.unavailableReason;
+        if (o.network) {
+            // Cofre em rede não "sai do local": inacessível é sempre problema.
+            if (!lastSeen.isValid())
+                add("vault_absent", o.id, AlertSeverity::Warning,
+                    "o cofre em rede \"" + vc->label + "\" ainda não foi acessado por esta máquina" + reason);
+            else if (lastSeen.secsTo(now) > vc->maxAbsenceSeconds)
+                add("vault_absent", o.id, AlertSeverity::Critical,
+                    "o cofre em rede \"" + vc->label + "\" está inacessível há " + ago(lastSeen, now) + " (limite "
+                        + config::describeDuration(vc->maxAbsenceSeconds) + ")" + reason);
+        } else if (!lastSeen.isValid())
             add("vault_absent", o.id, AlertSeverity::Warning, "o cofre \"" + vc->label + "\" nunca foi conectado a esta máquina");
         else if (lastSeen.secsTo(now) > vc->maxAbsenceSeconds)
             add("vault_absent", o.id, vc->rotation ? AlertSeverity::Warning : AlertSeverity::Critical,

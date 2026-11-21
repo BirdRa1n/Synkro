@@ -1,6 +1,7 @@
 #include "engine/Scrub.h"
 
 #include "catalog/Catalog.h"
+#include "config/VaultAccess.h"
 #include "database/DumpStore.h"
 #include "engine/VaultOps.h"
 #include "engine/Verify.h"
@@ -44,10 +45,11 @@ ScrubReport runScrub(const config::ConfigSet& set, double sampleRatio, bool repa
             const config::VaultConfig* vc = set.global.findVault(vid);
             if (!vc)
                 continue;
-            if (auto loc = vault::locateVault(QString::fromStdString(vc->vaultId), vc->path))
+            std::string why;
+            if (auto loc = config::locateVault(*vc, &why))
                 vaults.push_back({vc->label, vault::JobLayout(loc->location, win::fromUtf8(job.id))});
             else
-                report.notes.push_back("\"" + vc->label + "\" desconectado; não verificado para " + job.id);
+                report.notes.push_back("\"" + vc->label + "\" desconectado (" + why + "); não verificado para " + job.id);
         }
 
         for (const auto& v : vaults) {

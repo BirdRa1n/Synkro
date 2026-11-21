@@ -56,10 +56,13 @@ struct VaultConfig {
     std::string id;
     std::string vaultId;      // UUID do vault.json
     std::string label;
-    std::wstring path;        // opcional: dica de localização (ex.: "E:\")
+    std::wstring path;        // opcional: dica de localização (ex.: "E:\"); UNC = cofre em rede
     bool rotation = false;
     std::int64_t maxAbsenceSeconds = 7 * 86400;
     double freeSpaceAlert = 0.15;
+    bool network = false;     // path é \\servidor\compartilhamento\...: o cofre fica sempre ali
+    std::string netUser{};    // credentials.user (vazio = conta do computador)
+    SecretRef netPassword{};  // credentials.password
 };
 
 // ---- Notificações externas ---------------------------------------------------

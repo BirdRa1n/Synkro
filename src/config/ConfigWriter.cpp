@@ -182,6 +182,10 @@ std::string emitGlobal(const GlobalConfig& g)
           << "    label: " << quote(v.label) << "\n";
         if (!v.path.empty())
             o << "    path: " << quote(v.path) << "\n";
+        if (!v.netUser.empty())
+            o << "    credentials:\n"
+              << "      user: " << quote(v.netUser) << "\n"
+              << "      password: " << secret(v.netPassword) << "\n";
         o << "    rotation: " << (v.rotation ? "true" : "false") << "\n"
           << "    max_absence: " << formatDuration(v.maxAbsenceSeconds) << "\n"
           << "    free_space_alert: " << percent(v.freeSpaceAlert) << "\n";

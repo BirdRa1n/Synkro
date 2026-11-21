@@ -73,7 +73,8 @@ private:
         if (m_target.location.empty()) {
             m_result.vaultId = m_target.expectedVaultId;
             return Error::make(ErrorCode::DeviceNotReady,
-                               "o cofre \"" + m_target.label.toStdString() + "\" não está conectado");
+                               "o cofre \"" + m_target.label.toStdString() + "\" não está conectado"
+                                   + (m_target.unavailableReason.empty() ? "" : ": " + m_target.unavailableReason));
         }
 
         // Identidade: nunca gravar num disco que não seja o cofre esperado.

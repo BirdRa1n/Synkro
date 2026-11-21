@@ -2,6 +2,7 @@
 
 #include "hash/Sha256.h"
 #include "platform/windows/DiskHealth.h"
+#include "platform/windows/NetworkShare.h"
 #include "platform/windows/Win32.h"
 #include "vault/Vault.h"
 
@@ -109,6 +110,12 @@ CandidateReport checkCandidate(const CandidateRequest& req)
         report.findings.push_back({id, sev, std::move(title), std::move(detail)});
     };
 
+    if (win::isUncPath(req.candidatePath)) {
+        if (auto st = win::probeSmbServer(win::uncServer(req.candidatePath)); !st) {
+            add(CheckId::VolumeReadable, CheckSeverity::Blocking, "Servidor inacessível", st.error().message);
+            return report;
+        }
+    }
     auto volume = win::queryVolume(req.candidatePath);
     if (!volume) {
         add(CheckId::VolumeReadable, CheckSeverity::Blocking, "Disco inacessível", volume.error().message);
@@ -116,13 +123,37 @@ CandidateReport checkCandidate(const CandidateRequest& req)
     }
     report.volume = volume.value();
     const win::VolumeInfo& v = report.volume;
-    add(CheckId::VolumeReadable, CheckSeverity::Ok, "Disco acessível",
-        win::toUtf8(v.mountPoint) + " · " + disksToString(v.physicalDisks));
+    add(CheckId::VolumeReadable, CheckSeverity::Ok,
+        v.kind == win::DriveKind::Network ? "Compartilhamento acessível" : "Disco acessível",
+        win::toUtf8(v.mountPoint) + " · "
+            + (v.kind == win::DriveKind::Network ? std::string("compartilhamento de rede") : disksToString(v.physicalDisks)));
 
-    // 1. Disco físico diferente das origens.
-    if (v.kind == win::DriveKind::Network) {
-        add(CheckId::DifferentDiskFromSources, CheckSeverity::Blocking, "Unidade de rede não suportada",
-            "Na v1 os cofres precisam ser discos locais ou USB.");
+    const bool network = v.kind == win::DriveKind::Network;
+    const bool unc = win::isUncPath(req.candidatePath);
+
+    // 1. Disco físico diferente das origens (em rede: outra máquina).
+    if (network && !unc) {
+        add(CheckId::DifferentDiskFromSources, CheckSeverity::Blocking, "Unidade de rede mapeada",
+            "A letra de unidade só existe na sessão do usuário; o serviço do Synkro (SYSTEM) não a enxerga. "
+            "Use o caminho UNC, ex.: \\\\servidor\\backup\\pdv01.");
+    } else if (network) {
+        const std::wstring server = win::uncServer(req.candidatePath);
+        if (win::isThisComputer(server)) {
+            add(CheckId::DifferentDiskFromSources, CheckSeverity::Blocking, "Compartilhamento desta própria máquina",
+                "Um cofre aqui se perde junto com este computador. Use um servidor ou NAS diferente.");
+        } else {
+            add(CheckId::DifferentDiskFromSources, CheckSeverity::Ok, "Cofre em outra máquina",
+                "Servidor " + win::toUtf8(server) + ": protege contra a perda deste PDV inteiro (defeito, roubo, "
+                "incêndio), mas depende da rede e do servidor.");
+            bool sameServer = false;
+            for (const auto& other : req.otherVaults)
+                sameServer = sameServer || (win::isUncPath(other) && win::foldCase(win::uncServer(other)) == win::foldCase(server));
+            if (!req.otherVaults.empty())
+                add(CheckId::DifferentDiskFromOtherVaults, sameServer ? CheckSeverity::Warning : CheckSeverity::Ok,
+                    sameServer ? "Mesmo servidor de outro cofre" : "Diferente dos outros cofres",
+                    sameServer ? "Os dois cofres caem juntos com o servidor; prefira outro servidor ou um disco local."
+                               : "");
+        }
     } else if (v.physicalDisks.empty()) {
         add(CheckId::DifferentDiskFromSources, CheckSeverity::Warning, "Disco físico não identificado",
             "Não foi possível confirmar que o cofre está num disco diferente da origem.");
@@ -161,6 +192,9 @@ CandidateReport checkCandidate(const CandidateRequest& req)
     const std::wstring fs = win::foldCase(v.fileSystem);
     if (fs == L"NTFS" || fs == L"REFS")
         add(CheckId::FileSystem, CheckSeverity::Ok, "Sistema de arquivos " + win::toUtf8(v.fileSystem), "");
+    else if (network)
+        add(CheckId::FileSystem, CheckSeverity::Warning, "Sistema de arquivos " + win::toUtf8(v.fileSystem) + " no servidor",
+            "O servidor não se apresenta como NTFS; o teste de gravação abaixo confere se a cópia funciona.");
     else if (fs == L"EXFAT")
         add(CheckId::FileSystem, CheckSeverity::Warning, "Sistema de arquivos exFAT",
             "Funciona, mas não tem journaling: remover o disco sem ejetar pode corromper dados. NTFS é recomendado.");
@@ -179,7 +213,10 @@ CandidateReport checkCandidate(const CandidateRequest& req)
                 gib(v.freeBytes) + " livres; recomendado " + gib(needed));
     }
 
-    const std::wstring location = req.vaultLocation.empty() ? v.mountPoint : req.vaultLocation;
+    // Em rede, o cofre fica na pasta indicada (o compartilhamento costuma ser de vários PDVs).
+    const std::wstring location = !req.vaultLocation.empty() ? req.vaultLocation
+                                  : unc                        ? win::normalizeUnc(req.candidatePath)
+                                                               : v.mountPoint;
 
     // 6. Cofre já existente.
     auto existing = readIdentity(location);

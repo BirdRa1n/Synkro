@@ -14,6 +14,8 @@ add_library(synkro_core STATIC
     config/ConfigLoader.cpp
     config/ConfigWriter.h
     config/ConfigWriter.cpp
+    config/VaultAccess.h
+    config/VaultAccess.cpp
     config/ShutdownPolicy.h
     config/ShutdownPolicy.cpp
     config/JobRequest.h
@@ -81,6 +83,8 @@ add_library(synkro_core STATIC
     platform/windows/AlignedBuffer.h
     platform/windows/DiskHealth.h
     platform/windows/DiskHealth.cpp
+    platform/windows/NetworkShare.h
+    platform/windows/NetworkShare.cpp
     platform/windows/Locks.h
     platform/windows/Locks.cpp
     platform/windows/Shutdown.h
@@ -132,7 +136,7 @@ add_library(Synkro::Core ALIAS synkro_core)
 target_include_directories(synkro_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(synkro_core
     PUBLIC  Qt6::Core
-    PRIVATE Qt6::Network bcrypt crypt32 advapi32 yaml-cpp::yaml-cpp vssapi ole32 oleaut32 taskschd wbemuuid Synkro::SQLite3 Synkro::Zstd
+    PRIVATE Qt6::Network mpr bcrypt crypt32 advapi32 yaml-cpp::yaml-cpp vssapi ole32 oleaut32 taskschd wbemuuid Synkro::SQLite3 Synkro::Zstd
 )
 target_compile_definitions(synkro_core PUBLIC
     SYNKRO_VERSION_STRING="${PROJECT_VERSION}"

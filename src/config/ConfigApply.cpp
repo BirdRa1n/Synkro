@@ -5,7 +5,7 @@
 #include "platform/windows/Snapshot.h"
 #include "platform/windows/Win32.h"
 #include "vault/JobLayout.h"
-#include "vault/VaultLocator.h"
+#include "config/VaultAccess.h"
 
 #include <algorithm>
 #include <set>
@@ -139,7 +139,7 @@ Result<ApplyReport> applyConfig(const ConfigSet& set, const ApplyOptions& option
                 const VaultConfig* vc = set.global.findVault(vid);
                 if (!vc)
                     continue;
-                auto located = vault::locateVault(QString::fromStdString(vc->vaultId), vc->path);
+                auto located = locateVault(*vc);
                 if (!located) {
                     report.warnings.push_back("cofre \"" + vc->label + "\" desconectado: job.yml de " + job.id
                                               + " será enviado na próxima aplicação");

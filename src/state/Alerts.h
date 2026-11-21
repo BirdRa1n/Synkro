@@ -27,6 +27,8 @@ struct VaultObservation {
     // 2 com defeito, -1 desconhecida.
     int health = -1;
     std::string healthText;
+    bool network = false;             // compartilhamento de rede
+    std::string unavailableReason{};  // por que não foi localizado
 };
 
 // Calcula os alertas de architecture.md §12 a partir da configuração, do

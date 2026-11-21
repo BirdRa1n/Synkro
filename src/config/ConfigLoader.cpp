@@ -1,10 +1,12 @@
 #include "config/ConfigLoader.h"
 
 #include "config/Values.h"
+#include "config/VaultAccess.h"
 #include "core/Paths.h"
 #include "core/RunId.h"
 #include "secrets/SecretStore.h"
 #include "engine/VaultOps.h"
+#include "platform/windows/NetworkShare.h"
 #include "platform/windows/Volume.h"
 #include "platform/windows/Win32.h"
 #include "vault/VaultLocator.h"
@@ -1285,7 +1287,8 @@ void parseGlobalImpl(Reader& r, const std::optional<YAML::Node>& doc, GlobalConf
                 const std::string p = "vaults[" + std::to_string(i++) + "]";
                 if (!r.requireMap(v, p))
                     continue;
-                r.checkKeys(v, p, {"id", "vault_id", "label", "path", "rotation", "max_absence", "free_space_alert"});
+                r.checkKeys(v, p, {"id", "vault_id", "label", "path", "credentials", "rotation", "max_absence",
+                                   "free_space_alert"});
                 VaultConfig vc;
                 vc.id = r.str(v, "id", p, true).value_or("");
                 if (!vc.id.empty() && !isValidJobId(w(vc.id)))
@@ -1304,7 +1307,35 @@ void parseGlobalImpl(Reader& r, const std::optional<YAML::Node>& doc, GlobalConf
                     vc.path = w(*s);
                     std::replace(vc.path.begin(), vc.path.end(), L'/', L'\\');
                 }
+                vc.network = win::isUncPath(vc.path);
+                if (vc.network) {
+                    vc.path = win::normalizeUnc(vc.path);
+                    if (win::isThisComputer(win::uncServer(vc.path)))
+                        r.error(v["path"], join(p, "path"),
+                                "compartilhamento desta própria máquina não protege contra a perda dela; "
+                                "use um servidor ou NAS diferente");
+                } else if (!vc.path.empty() && vc.path.size() >= 2 && vc.path[1] == L':' && isNetworkPath(vc.path)) {
+                    r.error(v["path"], join(p, "path"),
+                            "unidade de rede mapeada não existe para o serviço do Synkro (SYSTEM); "
+                            "use o caminho UNC, ex.: \"//servidor/backup/pdv01\"");
+                } else if (!vc.path.empty() && vc.path.rfind(L"\\\\", 0) == 0) {
+                    r.error(v["path"], join(p, "path"), "caminho de rede incompleto; use //servidor/compartilhamento/pasta");
+                }
+                if (const YAML::Node c = v["credentials"]) {
+                    const std::string cp = join(p, "credentials");
+                    if (!vc.network)
+                        r.error(c, cp, "credenciais só se aplicam a cofres em rede (path //servidor/...)");
+                    if (r.requireMap(c, cp)) {
+                        r.checkKeys(c, cp, {"user", "password"});
+                        vc.netUser = r.str(c, "user", cp, true).value_or("");
+                        vc.netPassword = r.secret(c, "password", cp);
+                        if (vc.netPassword.kind == SecretRef::Kind::None && !c["password"])
+                            r.error(c, join(cp, "password"), "informe a senha: { secret: <nome> }");
+                    }
+                }
                 vc.rotation = r.boolean(v, "rotation", p).value_or(false);
+                if (vc.network && vc.rotation)
+                    r.error(v["rotation"], join(p, "rotation"), "cofre em rede não é de rodízio (não sai do local)");
                 vc.maxAbsenceSeconds = r.duration(v, "max_absence", p).value_or(vc.rotation ? 7 * 86400 : 86400);
                 vc.freeSpaceAlert = r.ratio(v, "free_space_alert", p).value_or(0.15);
                 g.vaults.push_back(std::move(vc));
@@ -1588,16 +1619,30 @@ void checkPhysicalDisks(ConfigSet& set)
     for (const auto& v : set.global.vaults) {
         if (v.vaultId.empty())
             continue;
-        located[v.id] = vault::locateVault(QString::fromStdString(v.vaultId), v.path);
+        std::string why;
+        located[v.id] = locateVault(v, &why);
         if (!located[v.id])
             set.diagnostics.push_back({Severity::Warning, L"synkro.yml", 0, 0, "vaults." + v.id,
-                                       "cofre \"" + v.label + "\" não está conectado agora; a checagem de disco "
-                                       "físico será feita na execução"});
+                                       v.network ? "cofre em rede \"" + v.label + "\" inacessível agora (" + why + ")"
+                                                 : "cofre \"" + v.label + "\" não está conectado agora; a checagem de "
+                                                   "disco físico será feita na execução"});
     }
 
     for (const auto& j : set.jobs) {
         std::vector<std::pair<std::string, std::vector<std::uint32_t>>> vaultDisks;
+        std::map<std::wstring, std::string> servers; // servidor -> primeiro cofre da tarefa nele
         for (const auto& vid : j.vaults) {
+            const VaultConfig* vc = set.global.findVault(vid);
+            if (vc && vc->network) {
+                // Dois cofres no mesmo servidor caem juntos com ele.
+                const std::wstring server = win::foldCase(win::uncServer(vc->path));
+                if (auto [it, fresh] = servers.emplace(server, vid); !fresh)
+                    set.diagnostics.push_back({Severity::Warning, j.file, j.line, 1, "vaults",
+                                               "\"" + it->second + "\" e \"" + vid + "\" estão no mesmo servidor ("
+                                                   + win::toUtf8(win::uncServer(vc->path))
+                                                   + "); para redundância real, use outro servidor ou um disco local"});
+                continue; // sem disco físico local para comparar
+            }
             const auto it = located.find(vid);
             if (it == located.end())
                 continue;

@@ -330,7 +330,8 @@ BackupResult runDatabaseBackup(const DatabaseBackupRequest& req)
         };
         if (target.location.empty()) {
             vr.vaultId = target.expectedVaultId;
-            fail("o cofre \"" + target.label.toStdString() + "\" não está conectado");
+            fail("o cofre \"" + target.label.toStdString() + "\" não está conectado"
+                 + (target.unavailableReason.empty() ? "" : ": " + target.unavailableReason));
             continue;
         }
         auto identity = vault::readIdentity(target.location);

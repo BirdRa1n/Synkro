@@ -25,6 +25,7 @@ struct VaultTarget {
     std::wstring location;        // pasta que contém SynkroVault (ex.: "E:\"); vazio = não conectado
     QString expectedVaultId;      // se preenchido, o vault.json precisa ter este ID
     QString label;                // nome amigável, para mensagens
+    std::string unavailableReason{}; // por que não foi localizado (ex.: servidor do NAS não responde)
 };
 
 enum class ProgressKind { ScanFinished, VaultStarted, FileDone, VaultFinished };
