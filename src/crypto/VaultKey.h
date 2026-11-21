@@ -3,7 +3,8 @@
 // Chave de um cofre cifrado (architecture.md §3.5).
 //
 // - Cada cofre cifrado tem uma chave aleatória de 256 bits.
-// - No próprio cofre (SynkroVault\key.json) ela fica cifrada com a CHAVE DE
+// - No próprio cofre (SynkroVault\key.json, com uma segunda cópia em
+//   key.backup.json) ela fica cifrada com a CHAVE DE
 //   RECUPERAÇÃO: 160 bits aleatórios mostrados uma única vez ao usuário
 //   (XXXX-XXXX-...). Com ela, qualquer computador restaura o cofre — inclusive
 //   depois da perda do PDV.

@@ -37,6 +37,26 @@ FileCipher::~FileCipher()
     wipe(m_key);
 }
 
+static void wipeBuffer(std::vector<std::uint8_t>& v)
+{
+    // Inclui a capacidade: erase() desloca os dados e deixa restos além do size().
+    v.resize(v.capacity());
+    if (!v.empty())
+        ::SecureZeroMemory(v.data(), v.size());
+}
+
+// Os buffers guardam texto em claro de blocos já processados.
+FileCipher::Encryptor::~Encryptor()
+{
+    wipeBuffer(m_pending);
+}
+
+FileCipher::Decryptor::~Decryptor()
+{
+    wipeBuffer(m_pending);
+    wipeBuffer(m_plain);
+}
+
 Result<std::shared_ptr<const FileCipher>> FileCipher::fromKey(const Key& vaultKey)
 {
     std::shared_ptr<FileCipher> c(new FileCipher);
@@ -153,7 +173,7 @@ Status FileCipher::Decryptor::write(const std::uint8_t* data, std::size_t size, 
         if (std::memcmp(m_header.data() + 8, m_owner->keyId().data(), 8) != 0)
             return Error::make(ErrorCode::Corrupted, "o arquivo foi cifrado com outra chave (de outro cofre)");
         m_chunk = readU32(m_header.data() + 32);
-        if (m_chunk == 0 || m_chunk > (64u << 20))
+        if (m_chunk == 0 || m_chunk > (16u << 20)) // limita a memória diante de um cabeçalho adulterado
             return badFormat("tamanho de bloco inválido");
         auto key = m_owner->fileKey(reinterpret_cast<const std::uint8_t*>(m_header.data() + 16));
         if (!key)

@@ -65,9 +65,16 @@ std::string hex(const std::uint8_t* p, std::size_t n)
     return s;
 }
 
-Result<KeyFile> readKeyFile(const std::wstring& location)
+constexpr std::uint64_t kMaxIterations = 10'000'000; // key.json adulterado não pode travar o processo
+
+std::wstring keyBackupPath(const std::wstring& location)
 {
-    auto raw = win::readWholeFile(keyFilePath(location), 64 * 1024);
+    return win::joinPath(vault::vaultRoot(location), L"key.backup.json");
+}
+
+Result<KeyFile> parseKeyFile(const std::wstring& path)
+{
+    auto raw = win::readWholeFile(path, 64 * 1024);
     if (!raw)
         return raw.error();
     const auto doc = QJsonDocument::fromJson(QByteArray::fromStdString(raw.value()));
@@ -86,13 +93,37 @@ Result<KeyFile> readKeyFile(const std::wstring& location)
     auto ct = fromBase64(w.value("ciphertext").toString().toStdString());
     auto tag = fromBase64(w.value("tag").toString().toStdString());
     if (!salt || !nonce || !ct || !tag || nonce.value().size() != 12 || ct.value().size() != 32 || tag.value().size() != 16
-        || k.iterations < 1000)
+        || salt.value().size() < 16 || k.iterations < 1000 || k.iterations > kMaxIterations || k.keyIdHex.size() != 16)
         return Error::make(ErrorCode::Corrupted, "key.json do cofre incompleto");
     k.salt = salt.value();
     k.nonce = nonce.value();
     k.wrapped = ct.value();
     k.tag = tag.value();
     return k;
+}
+
+// O key.json é a única forma de abrir o cofre com a chave de recuperação:
+// fica em duas cópias. Se uma faltar ou estiver danificada, vale a outra, e a
+// danificada é regravada (melhor esforço).
+Result<KeyFile> readKeyFile(const std::wstring& location)
+{
+    const std::wstring primary = keyFilePath(location), backup = keyBackupPath(location);
+    auto a = parseKeyFile(primary);
+    auto b = parseKeyFile(backup);
+    if (a && b && a.value().keyIdHex != b.value().keyIdHex)
+        return Error::make(ErrorCode::Corrupted, "as duas cópias do key.json do cofre são de chaves diferentes");
+    if (a && !b) {
+        if (auto raw = win::readWholeFile(primary, 64 * 1024))
+            (void)win::writeFileAtomically(backup, raw.value());
+    } else if (b && !a) {
+        if (auto raw = win::readWholeFile(backup, 64 * 1024))
+            (void)win::writeFileAtomically(primary, raw.value());
+    }
+    if (a)
+        return a;
+    if (b)
+        return b;
+    return a.error().code == ErrorCode::NotFound ? b.error() : a.error();
 }
 
 Result<Key> keyFromMachine(const QString& vaultId, const std::wstring& secretsFile)
@@ -174,7 +205,7 @@ std::wstring keyFilePath(const std::wstring& vaultLocation)
 
 bool isEncrypted(const std::wstring& vaultLocation)
 {
-    return ops::pathExists(keyFilePath(vaultLocation));
+    return ops::pathExists(keyFilePath(vaultLocation)) || ops::pathExists(keyBackupPath(vaultLocation));
 }
 
 std::string secretNameFor(const QString& vaultId)
@@ -235,7 +266,10 @@ Result<EnableResult> enableEncryption(const std::wstring& location, const std::w
                                               {"ciphertext", QString::fromStdString(toBase64(wrapped.data(), wrapped.size()))},
                                               {"tag", QString::fromStdString(toBase64(tag.data(), tag.size()))}}},
                   {"created_at", QDateTime::currentDateTimeUtc().toString(Qt::ISODate)}};
-    if (auto st = win::writeFileAtomically(keyFilePath(location), QJsonDocument(o).toJson().toStdString()); !st)
+    const std::string json = QJsonDocument(o).toJson().toStdString();
+    if (auto st = win::writeFileAtomically(keyFilePath(location), json); !st)
+        return st.error();
+    if (auto st = win::writeFileAtomically(keyBackupPath(location), json); !st)
         return st.error();
 
     EnableResult r;
@@ -341,6 +375,7 @@ Result<std::shared_ptr<const FileCipher>> cipherFor(const std::wstring& location
                                    + "\" é cifrado e a chave não está disponível nesta máquina; informe a chave de "
                                      "recuperação (synkro-worker vault unlock " + win::toUtf8(location) + ")");
         key = k.value();
+        wipe(k.value());
     }
     auto cipher = FileCipher::fromKey(key);
     wipe(key);

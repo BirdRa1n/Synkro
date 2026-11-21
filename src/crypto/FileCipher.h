@@ -45,6 +45,10 @@ public:
 
     class Encryptor {
     public:
+        Encryptor() = default;
+        Encryptor(Encryptor&&) noexcept = default;
+        Encryptor& operator=(Encryptor&&) noexcept = default;
+        ~Encryptor();
         Status write(const std::uint8_t* data, std::size_t size, const Sink& out);
         Status finish(const Sink& out);
 
@@ -60,6 +64,10 @@ public:
 
     class Decryptor {
     public:
+        Decryptor() = default;
+        Decryptor(Decryptor&&) noexcept = default;
+        Decryptor& operator=(Decryptor&&) noexcept = default;
+        ~Decryptor();
         Status write(const std::uint8_t* data, std::size_t size, const Sink& out);
         Status finish(const Sink& out);
 
