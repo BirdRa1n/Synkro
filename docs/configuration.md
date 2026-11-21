@@ -120,6 +120,14 @@ vaults:
     path: "F:/"                       # opcional: onde procurar primeiro. Se o disco mudar de
                                       # letra, o Synkro o encontra pelo vault_id em qualquer volume
 
+  - id: nas-escritorio                # cofre em rede (§5.2)
+    vault_id: 9d3f6a10-5e2b-4c8d-b7a1-3f0e9c2d4b55
+    label: "NAS do escritório"
+    path: "//nas01/backup/pdv01"      # caminho UNC: o cofre fica sempre aqui
+    credentials:
+      user: "nas01\\synkro"
+      password: { secret: nas-synkro }
+
 defaults:                             # valem para todas as tarefas, salvo se a tarefa sobrescrever
   vaults: [hd-externo-1, hd-interno-2]
   min_vaults_ok: all                  # all | número
@@ -225,6 +233,33 @@ notifications:
 - `synkro-worker notify test [--channel ID]`: manda uma mensagem de teste. Precisa de administrador, para ler os segredos.
 - `synkro-worker notify`: envia o que está pendente, sem esperar o intervalo de reenvio.
 - `synkro-worker notify list`: mostra o histórico, com as tentativas e o último erro.
+
+### 5.2. Cofres em rede (NAS ou servidor)
+
+Um cofre com `path` UNC (`//servidor/compartilhamento/pasta`) fica numa pasta de outra máquina: protege contra a perda do PDV inteiro. Como preparar:
+
+1. **Crie a pasta e o usuário no servidor.** Crie no NAS uma pasta por PDV, por exemplo `backup/pdv01`. Dê permissão de leitura e gravação a um usuário próprio do Synkro, de preferência sem acesso a outras pastas.
+2. **Cadastre a senha** (como administrador): `synkro-worker secret set nas-synkro`.
+3. **Inicialize o cofre:**
+
+   ```powershell
+   synkro-worker vault init \\nas01\backup\pdv01 --label "NAS do escritório" --user nas01\synkro --password-secret nas-synkro
+   ```
+
+   Depois anote o `vault_id` com `vault show`.
+4. **Declare o cofre** no `synkro.yml`, como no exemplo do §5.
+
+| Campo | Regra |
+|---|---|
+| `path` | UNC obrigatório. Unidade mapeada (`Z:/`) é recusada: ela só existe na sessão do usuário, e o serviço roda como SYSTEM. Compartilhamento desta própria máquina (`localhost`, nome do computador, IP local) também é recusado. |
+| `credentials.user` | `SERVIDOR\usuário`, `DOMÍNIO\usuário` ou `usuário@domínio`. Sem `credentials`, vale a conta do computador (domínio: dê permissão a `PDV01$`). |
+| `credentials.password` | Só `{ secret: ... }` ou `{ env: ... }`. |
+| `rotation` | Não se aplica (erro). |
+| `max_absence` | Padrão `1d`. Além disso, o alerta é **crítico** e traz o motivo. |
+
+Dois cofres da mesma tarefa no mesmo servidor geram aviso: eles caem juntos.
+
+Antes de cada acesso, o Synkro testa se o servidor responde na porta 445. Com o NAS desligado, a tarefa falha em poucos segundos com "o servidor ... não responde", sem travar.
 
 ---
 

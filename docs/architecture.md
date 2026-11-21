@@ -68,7 +68,7 @@ O Synkro guarda dados fiscais e comerciais. Todas as decisões deste documento d
 | Task Scheduler | Disparo das execuções agendadas, inclusive sem usuário logado; tarefa `\Synkro\Maintenance` a cada 15 min | Windows |
 | `C:\ProgramData\Synkro\config\*.yml` | **Fonte da verdade da configuração** ([configuration.md](configuration.md)) | Arquivos (escrita só Administradores/SYSTEM) |
 
-**Por que SYSTEM:** o VSS e a leitura de arquivos bloqueados exigem privilégio de administrador; SYSTEM também enxerga todos os discos locais independentemente de quem está logado. Na v1 os destinos são **discos locais/USB** (requisito do produto), o que elimina o problema de credenciais de rede. Compartilhamentos de rede ficam para a v2 (seção 15).
+**Por que SYSTEM:** o VSS e a leitura de arquivos bloqueados exigem privilégio de administrador; SYSTEM também enxerga todos os discos locais independentemente de quem está logado. Até a Fase 4 os destinos eram só **discos locais/USB**, o que eliminava o problema de credenciais de rede. Na Fase 5 entraram os compartilhamentos de rede, com credencial própria guardada via DPAPI (seção 3.3.1).
 
 ---
 
@@ -151,6 +151,26 @@ Cada tarefa define:
 | `max_vault_absence_days` | 7 | Alerta se um cofre não recebe backup há mais que isso |
 
 **Cada cofre é independente:** possui seu próprio catálogo, versões e estado. Não há "clone de disco para disco": todos os cofres são alimentados **a partir do mesmo snapshot VSS da origem**, garantindo que todos representem o mesmo instante. Um cofre ausente (USB desconectado) não impede os outros; quando retorna, ele é atualizado com o estado atual no próximo run.
+
+### 3.3.1. Cofre em compartilhamento de rede (Fase 5)
+
+Um cofre também pode ficar numa pasta de um NAS ou servidor (`path: "//nas01/backup/pdv01"`). É o mesmo formato de cofre (`SynkroVault\`, `vault.json`, catálogo, versões); muda como ele é encontrado e validado. Ele protege contra a perda do PDV inteiro (defeito, roubo, incêndio no caixa), que discos internos não cobrem. Exemplos de combinação:
+- um HD externo de rodízio mais o NAS;
+- um disco interno mais o NAS.
+
+- **Localização:** sempre no caminho UNC declarado, sem varrer volumes (a "letra" não existe). O `vault.json` continua sendo a identidade: uma pasta com outro cofre é recusada.
+- **Credencial:** `credentials.user` e a senha no cofre de segredos (DPAPI). O worker roda como SYSTEM, que não enxerga as unidades mapeadas nem as credenciais do usuário. Ele abre uma conexão sem letra de unidade (`WNetAddConnection2`, temporária, nada gravado no perfil). Sem `credentials`, vale a conta do computador, útil em domínio com permissão no compartilhamento para `PDV01$`.
+- **Sem travar:** antes de tocar no caminho UNC, o Synkro testa a porta 445 do servidor (3 s no worker, 800 ms no desktop). Assim um NAS desligado não prende o processo por ~30 s no redirecionador de rede. Uma falha fica guardada por 60 s no processo.
+- **Redundância:**
+  - Compartilhamento da própria máquina (`localhost`, nome do computador, um IP local) é recusado: não é outro equipamento.
+  - Unidade mapeada (`Z:`) também é recusada, porque não existe para o serviço.
+  - Dois cofres da mesma tarefa no mesmo servidor geram aviso.
+  - A regra de "disco físico diferente" não se aplica, porque não há disco local para comparar.
+- **Garantias mantidas:**
+  - A trava `job.lock` usa abertura exclusiva, que o servidor SMB respeita mesmo com dois PDVs no mesmo NAS.
+  - A troca atômica (`MoveFileEx`) e o `FlushFileBuffers` continuam valendo.
+  - A releitura sem cache confere o caminho até o servidor; o cache próprio do servidor não é visível ao cliente.
+- **Alertas:** um cofre em rede não é de rodízio. Inacessível além de `max_absence` (padrão 1 dia), vira alerta **crítico**, com o motivo: servidor não responde, senha recusada, compartilhamento inexistente...
 
 ### 3.4. Cofre rotativo (proteção contra ransomware e furto)
 
@@ -708,7 +728,11 @@ Scrub agendado com reparo entre cofres, saúde SMART, instalador MSI assinado, g
 
 ### Fase 5 — Evolução (em andamento)
 
-> **Entregue (2026-11-20):** notificações externas por e-mail, webhook (JSON próprio, Slack, Discord, Teams) e Telegram, com fila, novas tentativas, lembretes, aviso de resolução e relatório diário (§12.1).
+> **Entregue (2026-11-20):** notificações externas por e-mail, webhook (JSON próprio, Slack, Discord, Teams) e Telegram, com fila, novas tentativas, lembretes, aviso de resolução e relatório diário (§12.1). **Cofres em compartilhamento de rede** (NAS/servidor) com credencial via DPAPI, conexão sem letra de unidade e sondagem do servidor (§3.3.1).
+>
+> **Pendências dos cofres em rede:**
+> - O desktop mostra o estado do cofre em rede, mas ainda não cadastra um nem restaura a partir dele: o cadastro é feito com `vault init \\servidor\...` e a restauração com `restore --vault \\servidor\...`.
+> - Falta validar com um NAS real; os testes usam o compartilhamento administrativo da própria máquina por loopback.
 
 Notificações externas (e-mail/webhook), compartilhamentos de rede (com credencial guardada via DPAPI), compressão/criptografia do cofre, deduplicação, USN Journal (se as medições justificarem), destino em nuvem com imutabilidade, outras plataformas.
 
@@ -728,7 +752,7 @@ Notificações externas (e-mail/webhook), compartilhamentos de rede (com credenc
 | Verificação logo após a cópia lia o cache | Hash calculado durante a cópia + releitura sem cache + scrub periódico (6.2, 11) |
 | Concorrência só dentro do processo | Mutex por tarefa, lock por cofre, WAL entre processos (5, 6) |
 | Task Scheduler sem conta e sem recuperar execuções perdidas | SYSTEM, `StartWhenAvailable`, `IgnoreNew`, autorreparo (10.1) |
-| Compartilhamento de rede na v1 sem tratar credenciais | Rede adiada para a Fase 5; v1 só discos locais/USB (1) |
+| Compartilhamento de rede na v1 sem tratar credenciais | Rede adiada para a Fase 5 e entregue com credencial no cofre de segredos, conexão sem letra de unidade e sondagem do servidor (3.3.1) |
 | `std::filesystem`, OpenSSL, Qt SQL + sqlite3 | Win32 nativo, CNG, sqlite3 vendorizado (2) |
 | Caminhos longos, maiúsculas/minúsculas, precisão de data | Tratados explicitamente (6.1, 6.4) |
 | Duplicação `src/ui` × `apps/desktop`; scheduler com timer próprio | UI só em `apps/desktop`; scheduler apenas traduz para o Task Scheduler (10.1, 14) |
@@ -744,7 +768,7 @@ Notificações externas (e-mail/webhook), compartilhamentos de rede (com credenc
 | Plataforma | Windows 10/11 (x64) |
 | Linguagem / framework | C++20, Qt 6.8 LTS (Core + Widgets) |
 | Compilador | MSVC |
-| Destinos | Discos locais e USB cadastrados como cofres; 1 a N por tarefa, em discos físicos distintos |
+| Destinos | Discos locais e USB cadastrados como cofres, e (Fase 5) pastas em NAS/servidor; 1 a N por tarefa, em discos físicos distintos |
 | Modelo de backup | Incremental com versões (`current\` + `versions\`) |
 | Fonte da verdade | O cofre (JSON Lines); SQLite local é cache |
 | Detecção | Metadados (size, mtime, change time, file ID) + hash opcional; varredura completa nativa |

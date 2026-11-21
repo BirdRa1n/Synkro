@@ -2,7 +2,7 @@
 
 Backup incremental, versionado e redundante para dados críticos no Windows, com foco em sistemas PDV: arquivos fiscais, configurações e bancos de dados (PostgreSQL, MySQL/MariaDB, Firebird, SQL Server, SQLite).
 
-> **Estado:** as Fases 1 (motor e CLI), 2 (automação e bancos de dados), 3 (interface desktop) e 4 (robustez de campo e instalação) estão implementadas; a Fase 5 começou pelas notificações externas. Faltam o instalador MSI assinado, a migração para MSVC e a validação em campo (PDVs e servidores de banco reais). Veja o [roadmap](docs/architecture.md#15-roadmap).
+> **Estado:** as Fases 1 (motor e CLI), 2 (automação e bancos de dados), 3 (interface desktop) e 4 (robustez de campo e instalação) estão implementadas; a Fase 5 já trouxe as notificações externas e os cofres em rede. Faltam o instalador MSI assinado, a migração para MSVC e a validação em campo (PDVs e servidores de banco reais). Veja o [roadmap](docs/architecture.md#15-roadmap).
 
 ## Princípios
 
@@ -18,6 +18,7 @@ Backup incremental, versionado e redundante para dados críticos no Windows, com
 | Cofres com identidade (`vault.json`) e checagem do disco (disco físico, sistema de arquivos, espaço, teste de gravação) | ✅ |
 | Backup incremental de arquivos com versões (`current/` + `versions/<run>/`), nada é apagado | ✅ |
 | Vários cofres por tarefa, cada um independente (`min_vaults_ok`) | ✅ |
+| Cofres em rede (NAS/servidor, `path: //servidor/pasta`) com credencial no cofre de segredos e sondagem do servidor | ✅ |
 | Cópia segura: SHA-256 durante a cópia, releitura sem cache opcional, troca atômica | ✅ |
 | Guardas: origem ausente/vazia, exclusão e modificação em massa, arquivo-sentinela | ✅ |
 | Diário de operações e recuperação de execuções interrompidas | ✅ |
@@ -114,6 +115,7 @@ No Qt Creator basta abrir o `CMakeLists.txt` da raiz.
 synkro-worker vault check E:\ --source C:\PDV
 synkro-worker vault init  E:\ --label "HD Externo 1" --source C:\PDV
 synkro-worker vault show  E:\                      # mostra o vault_id para o synkro.yml
+synkro-worker vault init  \\nas01\backup\pdv01 --label "NAS" --user nas01\synkro --password-secret nas-synkro
 
 # 2. Configurar e conferir (C:\ProgramData\Synkro\config, ou --config-dir / SYNKRO_CONFIG_DIR)
 synkro-worker secret set pg-pdv                    # senha do banco, digitada sem eco

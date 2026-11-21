@@ -183,7 +183,25 @@ Não há o que fazer: o cofre é encontrado pelo `vault_id`, não pela letra.
 
 Duas máquinas estão configuradas para o mesmo banco num servidor compartilhado. A segunda execução é ignorada (código de saída 4). Deixe a tarefa em uma única máquina.
 
-### 7.4. Códigos de saída do worker
+### 7.4. Cofre em rede inacessível
+
+O alerta e o `synkro-worker status` mostram o motivo.
+
+| Motivo | O que fazer |
+|---|---|
+| `o servidor ... não responde (porta 445 ...)` | NAS desligado, fora da rede ou firewall bloqueando o compartilhamento de arquivos |
+| `servidor não encontrado na rede` / `(DNS)` | Nome errado no `path`; teste com o IP |
+| `usuário ou senha recusados pelo servidor` | Senha trocada no NAS: `synkro-worker secret set <nome>` com a nova |
+| `o compartilhamento ... não existe no servidor` | O compartilhamento foi renomeado ou removido |
+| `acesso negado a ...` | O usuário perdeu a permissão de gravação na pasta |
+| `o compartilhamento respondeu, mas não há cofre do Synkro em ...` | A pasta foi apagada ou movida no NAS. Restaure-a ou crie um cofre novo (`vault init`) e troque o `vault_id`. |
+
+**Restaurar a partir do NAS:**
+- **Linha de comando:** `synkro-worker restore --vault \\nas01\backup\pdv01 --job pdv-arquivos --to D:\Restaurado`. Se a sessão do administrador não tiver acesso ao NAS, rode `net use \\nas01\backup /user:nas01\synkro` antes.
+- **Desktop:** a tela **Restaurar** ainda lista só discos conectados a esta máquina.
+- **PDV perdido:** de um computador novo, o mesmo comando restaura tudo, porque o cofre é autossuficiente.
+
+### 7.5. Códigos de saída do worker
 
 `0` sucesso · `1` degradado · `2` falha · `3` bloqueado · `4` já em execução / ignorado · `64` uso incorreto.
 
