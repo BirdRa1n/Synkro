@@ -1,0 +1,154 @@
+# Gera a versão Windows do Synkro e publica na aba Releases do GitHub.
+#
+# Dois jeitos de disparar:
+#   - Actions → "Release (Windows)" → Run workflow, informando a versão
+#     (ex.: 0.9.0-beta.2). A tag v<versão> é criada no commit escolhido.
+#   - git tag v0.9.0-beta.2 && git push origin v0.9.0-beta.2
+#
+# A parte numérica da versão precisa ser a do CMakeLists.txt (project VERSION).
+# Versões com sufixo (beta.1, rc.1...) saem como pré-lançamento; o atualizador
+# do app só as oferece a quem ligou o canal beta.
+
+name: Release (Windows)
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Versão a publicar (ex.: 0.9.0-beta.2 ou 0.9.0). A parte numérica precisa ser a do CMakeLists.txt.'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    name: Compilar, testar e publicar
+    runs-on: windows-latest
+    timeout-minutes: 120
+    env:
+      QT_VERSION: '6.12.0'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Versão
+        id: ver
+        shell: pwsh
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          $v = if ($env:EVENT -eq 'workflow_dispatch') { $env:INPUT_VERSION } else { $env:REF_NAME }
+          $v = $v.Trim() -replace '^v', ''
+          if ($v -notmatch '^(\d+\.\d+\.\d+)(?:-([0-9A-Za-z.-]+))?$') { throw "versão inválida: '$v' (use 0.9.0 ou 0.9.0-beta.1)" }
+          $base = $Matches[1]; $suffix = $Matches[2]
+          $cmake = (Select-String -Path CMakeLists.txt -Pattern '^\s*VERSION\s+([0-9.]+)').Matches[0].Groups[1].Value
+          if ($cmake -ne $base) { throw "a versão $base não bate com o CMakeLists.txt ($cmake): atualize o project(VERSION) antes" }
+          if ($env:EVENT -eq 'workflow_dispatch') {
+            git fetch --tags --quiet
+            if (git tag --list "v$v") { throw "a tag v$v já existe; escolha outra versão" }
+          }
+          "version=$v"      >> $env:GITHUB_OUTPUT
+          "suffix=$suffix"  >> $env:GITHUB_OUTPUT
+          "prerelease=$(if ($suffix) { 'true' } else { 'false' })" >> $env:GITHUB_OUTPUT
+          Write-Host "Synkro $v (pré-lançamento: $([bool]$suffix))"
+
+      - name: Instalar o Qt ${{ env.QT_VERSION }} (MinGW)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: windows
+          target: desktop
+          arch: win64_mingw
+          tools: 'tools_mingw1310'
+          cache: true
+
+      - name: Ferramentas (MinGW, Ninja, Inno Setup)
+        shell: pwsh
+        run: |
+          $mingw = Get-ChildItem "$env:IQTA_TOOLS" -Directory -Filter 'mingw*' | Select-Object -First 1
+          if (-not $mingw) { throw "MinGW não encontrado em $env:IQTA_TOOLS" }
+          "$($mingw.FullName)\bin" >> $env:GITHUB_PATH
+          if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) { choco install ninja --no-progress -y }
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup --no-progress -y }
+
+      - name: Compilar e empacotar
+        shell: pwsh
+        env:
+          SYNKRO_QT_DIR: ${{ env.QT_ROOT_DIR }}
+        run: |
+          gcc --version | Select-Object -First 1
+          powershell -NoProfile -ExecutionPolicy Bypass -File installer\package.ps1 `
+            -QtDir "$env:QT_ROOT_DIR" -VersionSuffix "${{ steps.ver.outputs.suffix }}" -Installer
+          if ($LASTEXITCODE -ne 0) { throw "package.ps1 falhou ($LASTEXITCODE)" }
+
+      - name: Testes automatizados
+        shell: pwsh
+        run: |
+          $env:PATH = "$env:QT_ROOT_DIR\bin;$env:PATH"
+          ctest --preset mingw-release --timeout 900
+          if ($LASTEXITCODE -ne 0) { throw "testes falharam ($LASTEXITCODE)" }
+
+      - name: Notas da versão
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          PRERELEASE: ${{ steps.ver.outputs.prerelease }}
+        run: |
+          $beta = if ($env:PRERELEASE -eq 'true') {
+            "> **Versão de teste (beta).** Use em PDVs de piloto, seguindo o [roteiro do piloto](https://github.com/$($env:GITHUB_REPOSITORY)/blob/v$($env:VERSION)/docs/pilot.md)."
+          } else { '' }
+          @"
+          $beta
+
+          ## Instalar
+
+          1. Baixe **Synkro-Setup-$($env:VERSION).exe** e execute (pede administrador).
+          2. Na primeira execução o Windows pode mostrar o aviso do SmartScreen, porque o instalador ainda não é assinado:
+             *Mais informações → Executar assim mesmo*.
+          3. Para conferir o download: o SHA-256 está em ``Synkro-Setup-$($env:VERSION).exe.sha256``.
+
+          Quem já tem o Synkro instalado recebe a atualização pelo próprio app (**Configurações → Atualizações**).
+          Um backup em andamento nunca é interrompido: a instalação espera ele terminar. Os discos de backup não são tocados.
+
+          O ``.zip`` traz o mesmo conteúdo para instalação manual (``install.ps1``).
+          "@ | Set-Content -Encoding utf8 release-notes.md
+
+      - name: Publicar na aba Releases
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          PRERELEASE: ${{ steps.ver.outputs.prerelease }}
+        run: |
+          $v = $env:VERSION
+          $files = @(
+            "out\package\Synkro-Setup-$v.exe", "out\package\Synkro-Setup-$v.exe.sha256",
+            "out\package\Synkro-$v-win64.zip", "out\package\Synkro-$v-win64.zip.sha256"
+          )
+          foreach ($f in $files) { if (-not (Test-Path $f)) { throw "artefato ausente: $f" } }
+          $flags = @('--title', "Synkro $v", '--notes-file', 'release-notes.md', '--generate-notes', '--target', "$env:GITHUB_SHA")
+          if ($env:PRERELEASE -eq 'true') { $flags += '--prerelease' } else { $flags += '--latest' }
+          gh release create "v$v" @files @flags
+          if ($LASTEXITCODE -ne 0) { throw "gh release create falhou ($LASTEXITCODE)" }
+
+      - name: Guardar os artefatos da execução
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synkro-${{ steps.ver.outputs.version }}
+          path: |
+            out/package/*.exe
+            out/package/*.zip
+            out/package/*.sha256
+          if-no-files-found: ignore
