@@ -86,13 +86,19 @@ void VaultsPage::refresh()
         bl->setSpacing(2);
         auto* top = new QHBoxLayout;
         top->addWidget(label(fmt::q(vc->label), "fact"), 1);
-        auto* state = label(obs.connected ? QStringLiteral("● conectado") : (vc->rotation ? QStringLiteral("○ guardado fora")
-                                                                                          : QStringLiteral("○ desconectado")));
+        auto* state = label(obs.connected ? QStringLiteral("● conectado")
+                            : vc->network ? QStringLiteral("○ inacessível")
+                            : vc->rotation ? QStringLiteral("○ guardado fora")
+                                           : QStringLiteral("○ desconectado"));
+        if (!obs.connected && !obs.unavailableReason.empty())
+            state->setToolTip(fmt::q(obs.unavailableReason));
         state->setStyleSheet(QStringLiteral("color:%1; font-weight:600; font-size:8.5pt;")
                                  .arg((obs.connected ? tk().okFg : tk().muted).name()));
         top->addWidget(state);
         bl->addLayout(top);
-        QString sub = vc->rotation ? QStringLiteral("rodízio · limite de ausência ") : QStringLiteral("fixo · limite de ausência ");
+        QString sub = vc->network    ? QStringLiteral("em rede · ") + QString::fromStdWString(vc->path) + QStringLiteral(" · limite ")
+                      : vc->rotation ? QStringLiteral("rodízio · limite de ausência ")
+                                     : QStringLiteral("fixo · limite de ausência ");
         sub += fmt::q(synkro::config::describeDuration(vc->maxAbsenceSeconds));
         bl->addWidget(label(sub, "muted"));
         targets->addWidget(box);
@@ -124,9 +130,11 @@ void VaultsPage::refresh()
         auto* names = new QVBoxLayout;
         names->setSpacing(0);
         names->addWidget(label(fmt::q(vc->label), "h2"));
-        QString model = QStringLiteral("desconectado");
+        QString model = vc->network ? QStringLiteral("em rede · ") + QString::fromStdWString(vc->path)
+                                        + (obs.connected ? QString() : QStringLiteral(" · inacessível"))
+                                    : QStringLiteral("desconectado");
         synkro::win::VolumeInfo vol;
-        if (obs.connected) {
+        if (obs.connected && !vc->network) {
             if (auto info = synkro::win::queryVolume(obs.location)) {
                 vol = info.value();
                 QStringList disks;

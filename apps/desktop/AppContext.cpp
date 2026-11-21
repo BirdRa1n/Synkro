@@ -2,6 +2,7 @@
 
 #include "config/ConfigLoader.h"
 #include "core/Paths.h"
+#include "platform/windows/NetworkShare.h"
 #include "platform/windows/Win32.h"
 #include "process/ProcessRunner.h"
 
@@ -19,6 +20,9 @@ AppContext& AppContext::instance()
 
 AppContext::AppContext() : m_configDir(synkro::config::defaultConfigDirectory())
 {
+    // A avaliação dos cofres roda na thread da interface: um NAS desligado não
+    // pode congelar a janela. O worker usa o padrão (3 s).
+    synkro::win::setSmbProbeTimeout(800);
     auto st = synkro::StateStore::open(synkro::stateDatabaseFile());
     if (st)
         m_state.emplace(std::move(st).value());
