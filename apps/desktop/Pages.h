@@ -91,7 +91,11 @@ public:
     SettingsPage();
     void refresh() override;
 
+    // Pergunta e, se o usuário confirmar, instala a atualização baixada (fecha o app).
+    static void confirmInstall(QWidget* parent);
+
 private:
+    QWidget* buildUpdateCard();
     void refreshSecrets();
     QListWidget* m_secrets = nullptr;
 };

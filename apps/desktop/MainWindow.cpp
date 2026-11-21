@@ -6,6 +6,7 @@
 #include "Icons.h"
 #include "Pages.h"
 #include "Theme.h"
+#include "Updater.h"
 
 #include "core/Version.h"
 
@@ -14,6 +15,7 @@
 #include <QCloseEvent>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QFile>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -129,7 +131,10 @@ MainWindow::MainWindow()
             activateWindow();
         });
         menu->addSeparator();
-        menu->addAction(QStringLiteral("Sair"), qApp, &QApplication::quit);
+        menu->addAction(QStringLiteral("Sair"), this, [this] {
+            setProperty("quitting", true); // senão o closeEvent recusa e o app só volta para a bandeja
+            qApp->quit();
+        });
         m_tray->setContextMenu(menu);
         connect(m_tray, &QSystemTrayIcon::activated, this, [this](QSystemTrayIcon::ActivationReason r) {
             if (r == QSystemTrayIcon::Trigger || r == QSystemTrayIcon::DoubleClick) {
@@ -156,6 +161,24 @@ MainWindow::MainWindow()
     timer->setInterval(60 * 1000);
     connect(timer, &QTimer::timeout, [] { AppContext::instance().reload(); });
     timer->start();
+
+    // Atualização automática: baixada em segundo plano; a bandeja avisa quando
+    // está pronta e um clique no aviso leva à instalação.
+    connect(&Updater::instance(), &Updater::readyToInstall, this, [this](const QString& newVersion) {
+        if (m_tray)
+            m_tray->showMessage(QStringLiteral("Atualização do Synkro"),
+                                QStringLiteral("A versão %1 foi baixada. Clique para instalar.").arg(newVersion),
+                                QSystemTrayIcon::Information, 15000);
+    });
+    if (m_tray)
+        connect(m_tray, &QSystemTrayIcon::messageClicked, this, [this] {
+            if (Updater::instance().state() != Updater::State::Ready)
+                return;
+            showNormal();
+            activateWindow();
+            SettingsPage::confirmInstall(this);
+        });
+    Updater::instance().start();
 
     refreshNavIcons();
     showPage(0);
@@ -352,6 +375,30 @@ void MainWindow::saveScreenshots(const QString& dir)
     {
         ImportConfigDialog import(this);
         shoot(&import, QStringLiteral("10-importar-config.png"));
+    }
+    // Atualizador contra as releases de verdade (desenvolvimento): procura,
+    // baixa, confere o SHA-256 e fotografa o card. Nunca instala.
+    if (qEnvironmentVariableIntValue("SYNKRO_SCREENSHOT_UPDATE") == 1) {
+        auto& up = Updater::instance();
+        up.check(true);
+        QElapsedTimer t;
+        t.start();
+        while (t.elapsed() < 180000) {
+            QApplication::processEvents(QEventLoop::AllEvents, 200);
+            const auto s = up.state();
+            if (s != Updater::State::Checking && s != Updater::State::Downloading
+                && !(s == Updater::State::Available && up.autoDownload()))
+                break;
+        }
+        showPage(pageCount() - 1); // Configurações
+        for (int k = 0; k < 10; ++k)
+            QApplication::processEvents();
+        grab().save(QDir(dir).filePath(QStringLiteral("13-atualizacao.png")));
+        QFile log(QDir(dir).filePath(QStringLiteral("13-atualizacao.txt")));
+        if (log.open(QIODevice::WriteOnly | QIODevice::Text))
+            log.write(QStringLiteral("estado=%1\nerro=%2\nversao=%3\narquivo=%4\n")
+                          .arg(Updater::stateText(up.state()), up.errorText(), up.release().version, up.downloadedFile())
+                          .toUtf8());
     }
     Theme::instance().setMode(original); // não altera a preferência do usuário
 }

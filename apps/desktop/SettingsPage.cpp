@@ -3,10 +3,12 @@
 #include "Format.h"
 #include "Pages.h"
 #include "Theme.h"
+#include "Updater.h"
 
 #include "config/ConfigLoader.h"
 #include "config/ConfigPackage.h"
 #include "core/Paths.h"
+#include "core/Version.h"
 #include "platform/windows/Snapshot.h"
 #include "platform/windows/Win32.h"
 #include "secrets/SecretStore.h"
@@ -24,6 +26,7 @@
 #include <QHBoxLayout>
 #include <QInputDialog>
 #include <QMessageBox>
+#include <QProgressBar>
 #include <QRadioButton>
 #include <QSettings>
 #include <QUrl>
@@ -61,6 +64,103 @@ bool setAutostartForCurrentUser(bool on)
 
 SettingsPage::SettingsPage() : Page(QStringLiteral("Configurações"), QStringLiteral("Aparência, segredos e configuração do Synkro"))
 {
+}
+
+QWidget* SettingsPage::buildUpdateCard()
+{
+    auto& up = Updater::instance();
+    auto* box = card();
+    auto* v = new QVBoxLayout(box);
+    v->setContentsMargins(22, 20, 22, 20);
+    v->setSpacing(10);
+    v->addWidget(label(QStringLiteral("Atualizações"), "h2"));
+    auto* versionLine = label(QString(), "muted");
+    v->addWidget(versionLine);
+    auto* status = label(QString(), "fact");
+    status->setWordWrap(true);
+    v->addWidget(status);
+    auto* details = label(QString(), "muted");
+    details->setWordWrap(true);
+    details->setTextFormat(Qt::RichText);
+    details->setOpenExternalLinks(true);
+    v->addWidget(details);
+    auto* bar = new QProgressBar;
+    bar->setTextVisible(true);
+    v->addWidget(bar);
+
+    auto* beta = new QCheckBox(QStringLiteral("Receber versões beta (de teste, para PDVs de piloto)"));
+    beta->setChecked(up.betaChannel());
+    connect(beta, &QCheckBox::toggled, box, [](bool on) { Updater::instance().setBetaChannel(on); });
+    auto* autoDl = new QCheckBox(QStringLiteral("Baixar atualizações automaticamente (a instalação sempre pede confirmação)"));
+    autoDl->setChecked(up.autoDownload());
+    connect(autoDl, &QCheckBox::toggled, box, [](bool on) { Updater::instance().setAutoDownload(on); });
+    v->addWidget(beta);
+    v->addWidget(autoDl);
+
+    auto* row = new QHBoxLayout;
+    auto* checkBtn = button(QStringLiteral("Procurar atualizações"), QStringLiteral("refresh"));
+    connect(checkBtn, &QPushButton::clicked, box, [] { Updater::instance().check(true); });
+    auto* downloadBtn = button(QStringLiteral("Baixar"), QStringLiteral("restore"));
+    connect(downloadBtn, &QPushButton::clicked, box, [] { Updater::instance().download(); });
+    auto* installBtn = button(QStringLiteral("Instalar atualização"), QStringLiteral("check"), true);
+    connect(installBtn, &QPushButton::clicked, this, [this] { confirmInstall(this); });
+    row->addWidget(checkBtn);
+    row->addWidget(downloadBtn);
+    row->addStretch(1);
+    row->addWidget(installBtn);
+    v->addLayout(row);
+
+    auto sync = [=] {
+        auto& u = Updater::instance();
+        const auto s = u.state();
+        const auto& r = u.release();
+        const QDateTime last = u.lastCheck();
+        versionLine->setText(QStringLiteral("Versão instalada: %1 · canal %2%3")
+                                 .arg(QString::fromLatin1(synkro::versionString()),
+                                      u.betaChannel() ? QStringLiteral("beta") : QStringLiteral("estável"),
+                                      last.isValid() ? QStringLiteral(" · última verificação: ") + fmt::when(last) : QString()));
+        QString text = Updater::stateText(s);
+        if (s == Updater::State::Error)
+            text += QStringLiteral(": ") + u.errorText();
+        status->setText(text.left(1).toUpper() + text.mid(1));
+        const bool hasRelease = !r.version.isEmpty()
+                                && (s == Updater::State::Available || s == Updater::State::Downloading || s == Updater::State::Ready
+                                    || s == Updater::State::Error);
+        details->setVisible(hasRelease);
+        if (hasRelease)
+            details->setText(QStringLiteral("Synkro <b>%1</b>%2 · publicada em %3 · <a href=\"%4\">ver novidades</a>")
+                                 .arg(r.version.toHtmlEscaped(), r.prerelease ? QStringLiteral(" (beta)") : QString(),
+                                      r.publishedAt.toLocalTime().toString(QStringLiteral("dd/MM/yyyy")), r.pageUrl.toHtmlEscaped()));
+        bar->setVisible(s == Updater::State::Downloading);
+        bar->setRange(0, u.total() > 0 ? 100 : 0);
+        if (u.total() > 0)
+            bar->setValue(static_cast<int>(u.received() * 100 / u.total()));
+        checkBtn->setEnabled(s != Updater::State::Disabled && s != Updater::State::Checking && s != Updater::State::Downloading);
+        downloadBtn->setVisible(s == Updater::State::Available || (s == Updater::State::Error && !r.version.isEmpty()));
+        installBtn->setVisible(s == Updater::State::Ready);
+        beta->setEnabled(s != Updater::State::Disabled);
+        autoDl->setEnabled(s != Updater::State::Disabled);
+    };
+    connect(&up, &Updater::changed, box, sync);
+    connect(&up, &Updater::progress, box, sync);
+    sync();
+    return box;
+}
+
+void SettingsPage::confirmInstall(QWidget* parent)
+{
+    auto& up = Updater::instance();
+    const auto answer = QMessageBox::question(
+        parent, QStringLiteral("Instalar atualização"),
+        QStringLiteral("Instalar o Synkro %1 agora?\n\nO Synkro será fechado e reaberto ao fim da instalação (pede permissão de "
+                       "administrador). Um backup em andamento não é interrompido: a instalação espera ele terminar. "
+                       "Os discos de backup e a configuração não são alterados.")
+            .arg(up.release().version));
+    if (answer != QMessageBox::Yes)
+        return;
+    const QString error = up.installAndQuit();
+    if (!error.isEmpty())
+        QMessageBox::warning(parent, QStringLiteral("Instalar atualização"), error.left(1).toUpper() + error.mid(1) + '.');
 }
 
 void SettingsPage::refresh()
@@ -108,6 +208,9 @@ void SettingsPage::refresh()
                                                 "mesmo com a janela fechada."),
                         "muted"));
     body()->addWidget(look);
+
+    // ---- Atualizações ------------------------------------------------------------
+    body()->addWidget(buildUpdateCard());
 
     // ---- Segredos ----------------------------------------------------------------
     auto* sec = card();
