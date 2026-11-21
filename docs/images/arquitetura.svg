@@ -1,0 +1,129 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 420" width="1200" height="420" role="img" aria-labelledby="t d">
+  <title id="t">Arquitetura do Synkro</title>
+  <desc id="d">O desktop edita a configuração YAML e os segredos e registra as tarefas no Agendador do Windows. O Agendador dispara o synkro-worker como SYSTEM, que lê a configuração, grava nos cofres, registra o estado e envia notificações; o desktop lê o estado para mostrar a situação.</desc>
+  <defs>
+    <style>
+      .t { font-family: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif; }
+      .bg { fill: #f8fafc; stroke: #e2e8f0; }
+      .box { fill: #ffffff; stroke: #cbd5e1; }
+      .main { fill: #eef2ff; stroke: #6366f1; stroke-width: 1.6; }
+      .h { fill: #0f172a; font-size: 15px; font-weight: 700; }
+      .b { fill: #64748b; font-size: 12.5px; }
+      .cap { fill: #6366f1; font-size: 11px; font-weight: 700; letter-spacing: 1.4px; }
+      .e { fill: none; stroke: #94a3b8; stroke-width: 1.8; }
+      .hot { fill: none; stroke: #6366f1; stroke-width: 2.4; }
+      .dash { fill: none; stroke: #94a3b8; stroke-width: 1.8; stroke-dasharray: 6 5; }
+      .lbl { fill: #64748b; font-size: 11.5px; font-style: italic; }
+      .arrow { fill: #94a3b8; }
+      .arrowhot { fill: #6366f1; }
+      .pulse { fill: #4f46e5; }
+      @media (prefers-color-scheme: dark) {
+        .bg { fill: #0f172a; stroke: #1e293b; }
+        .box { fill: #111827; stroke: #334155; }
+        .main { fill: #1e1b4b; stroke: #818cf8; }
+        .h { fill: #f1f5f9; }
+        .b, .lbl { fill: #94a3b8; }
+        .cap { fill: #a5b4fc; }
+        .e, .dash { stroke: #475569; }
+        .arrow { fill: #475569; }
+        .hot { stroke: #818cf8; }
+        .arrowhot { fill: #818cf8; }
+        .pulse { fill: #c7d2fe; }
+      }
+    </style>
+    <marker id="m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path class="arrow" d="M0 0L10 5L0 10z"/>
+    </marker>
+    <marker id="mh" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path class="arrowhot" d="M0 0L10 5L0 10z"/>
+    </marker>
+    <path id="h1" d="M520 300 C 600 300, 600 214, 676 214"/>
+    <path id="h2" d="M916 214 C 950 214, 950 96, 984 96"/>
+  </defs>
+
+  <rect class="bg" x="1" y="1" width="1198" height="418" rx="22"/>
+
+  <g class="t">
+    <text class="cap" x="32" y="42">QUEM FAZ O QUÊ</text>
+
+    <!-- Desktop -->
+    <g transform="translate(32 120)">
+      <rect class="main" width="210" height="150" rx="14"/>
+      <text class="h" x="18" y="34">Synkro Desktop</text>
+      <text class="b" x="18" y="60">Painel, tarefas, cofres,</text>
+      <text class="b" x="18" y="78">restauração e modo fácil</text>
+      <text class="b" x="18" y="104">Administrador · bandeja</text>
+      <text class="b" x="18" y="122">atualização automática</text>
+    </g>
+
+    <!-- Configuração e segredos -->
+    <g transform="translate(310 60)">
+      <rect class="box" width="210" height="74" rx="12"/>
+      <text class="h" x="16" y="30">Configuração YAML</text>
+      <text class="b" x="16" y="52">ProgramData\Synkro\config</text>
+    </g>
+    <g transform="translate(310 156)">
+      <rect class="box" width="210" height="74" rx="12"/>
+      <text class="h" x="16" y="30">Cofre de segredos</text>
+      <text class="b" x="16" y="52">DPAPI · senhas fora do YAML</text>
+    </g>
+    <g transform="translate(310 264)">
+      <rect class="box" width="210" height="74" rx="12"/>
+      <text class="h" x="16" y="30">Agendador de Tarefas</text>
+      <text class="b" x="16" y="52">\Synkro · executa como SYSTEM</text>
+    </g>
+
+    <!-- Worker -->
+    <g transform="translate(676 150)">
+      <rect class="main" width="240" height="128" rx="14"/>
+      <text class="h" x="18" y="34">synkro-worker</text>
+      <text class="b" x="18" y="58">CLI + libsynkro (o motor)</text>
+      <text class="b" x="18" y="82">Qt Core + Win32 · VSS · CNG</text>
+      <text class="b" x="18" y="104">sem interface, sem rede própria</text>
+    </g>
+
+    <!-- Destinos -->
+    <g transform="translate(984 60)">
+      <rect class="box" width="186" height="74" rx="12"/>
+      <text class="h" x="16" y="30">Cofres</text>
+      <text class="b" x="16" y="52">discos locais e pastas SMB</text>
+    </g>
+    <g transform="translate(984 176)">
+      <rect class="box" width="186" height="74" rx="12"/>
+      <text class="h" x="16" y="30">Estado e alertas</text>
+      <text class="b" x="16" y="52">SQLite local · Event Log</text>
+    </g>
+    <g transform="translate(984 292)">
+      <rect class="box" width="186" height="74" rx="12"/>
+      <text class="h" x="16" y="30">Notificações</text>
+      <text class="b" x="16" y="52">e-mail · webhook · Telegram</text>
+    </g>
+
+    <!-- Ligações do desktop -->
+    <path class="e" marker-end="url(#m)" d="M242 160 C 276 160, 276 97, 308 97"/>
+    <path class="e" marker-end="url(#m)" d="M242 195 H 308"/>
+    <path class="e" marker-end="url(#m)" d="M242 235 C 276 235, 276 301, 308 301"/>
+    <text class="lbl" x="250" y="122">edita e valida</text>
+    <text class="lbl" x="150" y="298">registra as tarefas</text>
+
+    <!-- Worker lê configuração e segredos -->
+    <path class="e" marker-end="url(#m)" d="M520 97 C 600 97, 600 180, 674 180"/>
+    <path class="e" marker-end="url(#m)" d="M520 193 C 600 193, 600 196, 674 196"/>
+    <text class="lbl" x="560" y="128">lê</text>
+
+    <!-- Caminho quente: agendador → worker → cofres -->
+    <path class="hot" marker-end="url(#mh)" d="M520 300 C 600 300, 600 214, 674 214"/>
+    <text class="lbl" x="540" y="324">dispara no horário</text>
+    <path class="hot" marker-end="url(#mh)" d="M916 214 C 950 214, 950 96, 982 96"/>
+    <path class="e" marker-end="url(#m)" d="M916 226 H 982"/>
+    <path class="e" marker-end="url(#m)" d="M916 240 C 950 240, 950 328, 982 328"/>
+    <g class="pulse">
+      <circle r="4.5"><animateMotion dur="1.8s" repeatCount="indefinite"><mpath href="#h1"/></animateMotion></circle>
+      <circle r="4.5"><animateMotion dur="1.8s" begin="-0.9s" repeatCount="indefinite"><mpath href="#h2"/></animateMotion></circle>
+    </g>
+
+    <!-- Desktop lê o estado -->
+    <path class="dash" marker-end="url(#m)" d="M1076 368 C 1076 408, 80 408, 80 272"/>
+    <text class="lbl" x="600" y="366">o desktop lê o estado para o painel, a bandeja e os alertas</text>
+  </g>
+</svg>
