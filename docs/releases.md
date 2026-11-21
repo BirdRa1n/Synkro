@@ -13,7 +13,9 @@ A parte numérica fica no `CMakeLists.txt` (`project(Synkro VERSION 0.9.0)`). O 
 
 ## 2. Publicar uma versão (aba Releases)
 
-O workflow [`.github/workflows/release.yml`](../.github/workflows/release.yml) compila no Windows (Qt MinGW), roda todos os testes, gera o pacote e o instalador e publica a release. Há dois jeitos de disparar:
+O workflow [`.github/workflows/release.yml`](../.github/workflows/release.yml) compila no Windows, roda todos os testes, gera o pacote e o instalador e publica a release. A cada push, o [`ci.yml`](../.github/workflows/ci.yml) compila e testa sem publicar nada.
+
+Os dois usam o **Qt 6.8 LTS** (MinGW 13.1): o instalador de Qt usado pelo GitHub Actions (aqtinstall) ainda não instala o 6.12 da máquina de desenvolvimento. O código só usa APIs presentes desde o Qt 6.4. Há dois jeitos de disparar:
 
 - **Pelo GitHub:** **Actions → Release (Windows) → Run workflow**, informando a versão (ex.: `0.9.0-beta.2`). A tag `v0.9.0-beta.2` é criada no commit escolhido.
 - **Pela linha de comando:**

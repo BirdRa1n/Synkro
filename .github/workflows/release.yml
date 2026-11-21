@@ -34,9 +34,10 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 120
     env:
-      QT_VERSION: '6.12.0'
+      # Qt 6.8 LTS: o aqtinstall (usado pela action) ainda não instala o 6.12 da máquina de desenvolvimento.
+      QT_VERSION: '6.8.3'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -144,7 +145,7 @@ jobs:
 
       - name: Guardar os artefatos da execução
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: synkro-${{ steps.ver.outputs.version }}
           path: |

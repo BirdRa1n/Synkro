@@ -1,0 +1,61 @@
+# Compila e testa no Windows a cada push e pull request (não publica nada).
+# A publicação fica no release.yml.
+
+name: CI (Windows)
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['docs/**', '**.md']
+  pull_request:
+    paths-ignore: ['docs/**', '**.md']
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Compilar e testar
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      QT_VERSION: '6.8.3'
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Instalar o Qt ${{ env.QT_VERSION }} (MinGW)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: windows
+          target: desktop
+          arch: win64_mingw
+          tools: 'tools_mingw1310'
+          cache: true
+
+      - name: Ferramentas (MinGW, Ninja)
+        shell: pwsh
+        run: |
+          $mingw = Get-ChildItem "$env:IQTA_TOOLS" -Directory -Filter 'mingw*' | Select-Object -First 1
+          if (-not $mingw) { throw "MinGW não encontrado em $env:IQTA_TOOLS" }
+          "$($mingw.FullName)\bin" >> $env:GITHUB_PATH
+          if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) { choco install ninja --no-progress -y }
+
+      - name: Compilar (Release)
+        shell: pwsh
+        env:
+          SYNKRO_QT_DIR: ${{ env.QT_ROOT_DIR }}
+        run: |
+          cmake --preset mingw-release
+          if ($LASTEXITCODE -ne 0) { throw 'configuração falhou' }
+          cmake --build --preset mingw-release
+          if ($LASTEXITCODE -ne 0) { throw 'compilação falhou' }
+
+      - name: Testes automatizados
+        shell: pwsh
+        run: |
+          $env:PATH = "$env:QT_ROOT_DIR\bin;$env:PATH"
+          ctest --preset mingw-release --timeout 900
+          if ($LASTEXITCODE -ne 0) { throw "testes falharam ($LASTEXITCODE)" }
