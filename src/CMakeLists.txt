@@ -120,6 +120,9 @@ add_library(synkro_core STATIC
     state/StateStore.h
     state/StateStore.cpp
 
+    support/Doctor.h
+    support/Doctor.cpp
+
     scan/ChangeDetector.h
     scan/ChangeDetector.cpp
     scan/FileScanner.h
