@@ -8,6 +8,7 @@
 #include "Theme.h"
 #include "Updater.h"
 
+#include "config/ConfigWriter.h"
 #include "core/Version.h"
 
 #include <QApplication>
@@ -309,6 +310,22 @@ void MainWindow::saveScreenshots(const QString& dir)
     {
         AddVaultDialog add(this);
         shoot(&add, QStringLiteral("9-adicionar-disco.png"));
+    }
+    {
+        // "Revisar no editor YAML" depois de adicionar um cofre (exemplo).
+        synkro::config::VaultConfig sample;
+        sample.id = "hd-externo-2";
+        sample.vaultId = "9d3f6a10-5e2b-4c8d-b7a1-3f0e9c2d4b55";
+        sample.label = "HD Externo 2";
+        sample.path = L"F:\\";
+        sample.rotation = true;
+        auto proposed = synkro::config::insertVaultIntoGlobalYaml(AppContext::instance().readConfigFile(L"synkro.yml"), sample);
+        if (proposed) {
+            YamlEditorDialog editor(L"synkro.yml", this, QString::fromStdString(proposed.value()),
+                                    QStringLiteral("O cofre \"HD Externo 2\" (id hd-externo-2) foi inserido na lista vaults. "
+                                                   "Confira e clique em Salvar; Cancelar não altera o arquivo."));
+            shoot(&editor, QStringLiteral("8-editor-yaml-cofre-novo.png"));
+        }
     }
     {
         AddVaultDialog add(this, /*network=*/true);

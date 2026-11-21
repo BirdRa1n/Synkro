@@ -140,8 +140,10 @@ private:
 class YamlEditorDialog : public QDialog {
     Q_OBJECT
 public:
-    // `relativePath`: "synkro.yml" ou "jobs\\<id>.yml".
-    explicit YamlEditorDialog(const std::wstring& relativePath, QWidget* parent = nullptr);
+    // `relativePath`: "synkro.yml" ou "jobs\\<id>.yml". `proposedText`: abre com
+    // este texto (ainda não salvo) em vez do arquivo; `notice` aparece no topo.
+    explicit YamlEditorDialog(const std::wstring& relativePath, QWidget* parent = nullptr, const QString& proposedText = {},
+                              const QString& notice = {});
 
 private:
     void validate();

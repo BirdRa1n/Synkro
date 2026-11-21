@@ -428,37 +428,81 @@ void AddVaultDialog::initialize()
     }
     m_netPassword->clear();
 
+    // Texto proposto para o synkro.yml. Gerado pelo desktop (ou ainda inexistente):
+    // regenera inteiro, incluindo o cofre nos padrões se for o primeiro. Editado à
+    // mão: insere só o item na lista vaults, preservando comentários e formatação.
     const std::string current = ctx.readConfigFile(L"synkro.yml");
-    if (current.empty() || synkro::config::isPristineGenerated(current)) {
+    const bool generated = current.empty() || synkro::config::isPristineGenerated(current);
+    std::string proposed;
+    bool addedToDefaults = false;
+    if (generated) {
         g.vaults.push_back(vc);
-        if (g.defaultVaults.empty() || current.empty())
+        if (g.defaultVaults.empty() || current.empty()) {
             g.defaultVaults.push_back(id);
-        if (auto st = ctx.writeConfigFile(L"synkro.yml", synkro::config::emitGlobal(g)); !st) {
+            addedToDefaults = true;
+        }
+        proposed = synkro::config::emitGlobal(g);
+    } else if (auto inserted = synkro::config::insertVaultIntoGlobalYaml(current, vc)) {
+        proposed = inserted.value();
+    }
+    // Só vale se o resultado for válido e tiver o cofre: senão, vai direto ao editor.
+    bool proposedOk = false;
+    if (!proposed.empty()) {
+        std::vector<synkro::config::Diagnostic> diags;
+        const auto parsed = synkro::config::parseGlobalDocument(proposed, L"synkro.yml", diags);
+        proposedOk = parsed.findVault(id) != nullptr
+                     && std::none_of(diags.begin(), diags.end(),
+                                     [](const auto& d) { return d.severity == synkro::config::Severity::Error; });
+    }
+
+    QMessageBox ask(QMessageBox::Question, windowTitle(),
+                    QStringLiteral("Cofre \"%1\" pronto no disco. Como incluí-lo na configuração?").arg(name), QMessageBox::NoButton,
+                    this);
+    ask.setInformativeText(
+        proposedOk ? QStringLiteral("Automaticamente: o Synkro acrescenta o cofre ao synkro.yml%1.\n"
+                                    "Editor YAML: abre o synkro.yml já com o cofre inserido, para você conferir, ajustar "
+                                    "(rodízio, limite de ausência, espaço) e salvar.")
+                         .arg(generated ? QString() : QStringLiteral(" sem mexer no resto do arquivo"))
+                   : QStringLiteral("O synkro.yml está num formato que o Synkro não edita sozinho; abra o editor para incluir "
+                                    "o cofre na lista vaults."));
+    auto* autoBtn = ask.addButton(QStringLiteral("Adicionar automaticamente"), QMessageBox::AcceptRole);
+    auto* editBtn = ask.addButton(QStringLiteral("Revisar no editor YAML"), QMessageBox::ActionRole);
+    ask.addButton(QStringLiteral("Depois"), QMessageBox::RejectRole);
+    autoBtn->setEnabled(proposedOk);
+    ask.setDefaultButton(proposedOk ? autoBtn : editBtn);
+    ask.exec();
+
+    if (ask.clickedButton() == autoBtn) {
+        if (auto st = ctx.writeConfigFile(L"synkro.yml", proposed); !st) {
             QMessageBox::warning(this, windowTitle(), QStringLiteral("O cofre foi criado no disco (ID %1), mas a configuração "
                                                                     "não pôde ser gravada: %2").arg(vaultId, fmt::q(st.error().message)));
             return;
         }
-        QMessageBox::information(this, windowTitle(),
-                                 QStringLiteral("Cofre \"%1\" pronto e adicionado à configuração.").arg(name) + secretWarning);
+        QString msg = QStringLiteral("Cofre \"%1\" adicionado à configuração.").arg(name);
+        if (!addedToDefaults)
+            msg += QStringLiteral("\n\nPara uma tarefa gravar nele, inclua-o nos cofres da tarefa (Tarefas → editar)%1.")
+                       .arg(generated ? QString() : QStringLiteral(" ou em defaults.vaults"));
+        QMessageBox::information(this, windowTitle(), msg + secretWarning);
+    } else if (ask.clickedButton() == editBtn) {
+        YamlEditorDialog editor(L"synkro.yml", this, proposedOk ? QString::fromStdString(proposed) : QString(),
+                                proposedOk ? QStringLiteral("O cofre \"%1\" (id %2) foi inserido na lista vaults. Confira e "
+                                                            "clique em Salvar; Cancelar não altera o arquivo.")
+                                                 .arg(name, fmt::q(id))
+                                           : QStringLiteral("Inclua o cofre na lista vaults:\n%1")
+                                                 .arg(fmt::q(synkro::config::emitVaultEntry(vc))));
+        if (editor.exec() != QDialog::Accepted)
+            QMessageBox::information(this, windowTitle(),
+                                     QStringLiteral("O cofre está pronto no disco (ID %1), mas não entrou na configuração. Para "
+                                                    "incluí-lo depois, adicione-o de novo (ele é reaproveitado) ou edite o "
+                                                    "synkro.yml.")
+                                         .arg(vaultId) + secretWarning);
+        else if (!secretWarning.isEmpty())
+            QMessageBox::information(this, windowTitle(), secretWarning.trimmed());
     } else {
-        // synkro.yml editado à mão: o desktop não regrava; mostra o trecho a incluir.
-        QString snippet = QStringLiteral("  - id: %1\n    vault_id: %2\n    label: \"%3\"\n    path: \"%4\"\n")
-                              .arg(fmt::q(id), vaultId, name, fmt::q(m_mountPoint).replace('\\', '/'));
-        if (vc.network) {
-            if (!vc.netUser.empty())
-                snippet += QStringLiteral("    credentials:\n      user: \"%1\"\n      password: { secret: %2 }\n")
-                               .arg(fmt::q(vc.netUser).replace('\\', QStringLiteral("\\\\")), fmt::q(vc.netPassword.name));
-        } else {
-            snippet += QStringLiteral("    rotation: %1\n").arg(vc.rotation ? QStringLiteral("true") : QStringLiteral("false"));
-        }
-        snippet += secretWarning;
-        QMessageBox box(QMessageBox::Information, windowTitle(),
-                        QStringLiteral("Cofre criado no disco. Como o synkro.yml foi editado à mão, inclua este trecho na lista "
-                                       "vaults (o editor será aberto):\n\n") + snippet,
-                        QMessageBox::Ok, this);
-        box.exec();
-        YamlEditorDialog editor(L"synkro.yml", this);
-        editor.exec();
+        QMessageBox::information(this, windowTitle(),
+                                 QStringLiteral("O cofre está pronto no disco (ID %1), mas não entrou na configuração. Para "
+                                                "incluí-lo depois, adicione o disco de novo (o cofre é reaproveitado).")
+                                     .arg(vaultId) + secretWarning);
     }
     accept();
 }
@@ -1180,20 +1224,27 @@ void JobWizard::accept()
 // YamlEditorDialog
 // ============================================================================
 
-YamlEditorDialog::YamlEditorDialog(const std::wstring& relativePath, QWidget* parent)
+YamlEditorDialog::YamlEditorDialog(const std::wstring& relativePath, QWidget* parent, const QString& proposedText,
+                                   const QString& notice)
     : QDialog(parent), m_path(relativePath), m_isGlobal(synkro::win::foldCase(relativePath) == L"SYNKRO.YML")
 {
     setWindowTitle(QStringLiteral("Editor YAML — ") + fmt::q(relativePath));
     resize(1180, 760);
     auto* v = new QVBoxLayout(this);
     v->setContentsMargins(20, 18, 20, 18);
+    if (!notice.isEmpty()) {
+        auto* n = label(notice, "fact");
+        n->setWordWrap(true);
+        v->addWidget(n);
+    }
     v->addWidget(label(QStringLiteral("As alterações são validadas enquanto você digita; o arquivo só é salvo sem erros."), "muted"));
 
     auto* split = new QSplitter;
     m_editor = new QPlainTextEdit;
     m_editor->setProperty("role", "code");
     m_editor->setLineWrapMode(QPlainTextEdit::NoWrap);
-    m_editor->setPlainText(QString::fromStdString(AppContext::instance().readConfigFile(relativePath)));
+    m_editor->setPlainText(proposedText.isEmpty() ? QString::fromStdString(AppContext::instance().readConfigFile(relativePath))
+                                                  : proposedText);
     new YamlHighlighter(m_editor->document());
     split->addWidget(m_editor);
 
