@@ -1,5 +1,6 @@
 #include "Icons.h"
 
+#include <QGuiApplication>
 #include <QHash>
 #include <QPainter>
 #include <QSvgRenderer>
@@ -64,17 +65,59 @@ QIcon icon(const QString& name, const QColor& color, int size)
     return QIcon(pixmap(name, color, size));
 }
 
-QIcon trayIcon(const QColor& status)
+QPixmap appPixmap(int size)
 {
-    QPixmap pm(64, 64);
+    // Desenhado na resolução física: nítido em telas com escala (125%, 150%...).
+    const qreal dpr = qApp ? qApp->devicePixelRatio() : 1.0;
+    const int px = qMax(1, qRound(size * dpr));
+    QSvgRenderer renderer(px <= 32 ? QStringLiteral(":/icons/synkro-small.svg") : QStringLiteral(":/icons/synkro.svg"));
+    QPixmap pm(px, px);
     pm.fill(Qt::transparent);
     QPainter p(&pm);
     p.setRenderHint(QPainter::Antialiasing);
-    p.setBrush(status);
-    p.setPen(Qt::NoPen);
-    p.drawEllipse(QRectF(2, 2, 60, 60));
-    p.drawPixmap(QRect(14, 14, 36, 36), pixmap(QStringLiteral("shield-check"), Qt::white, 36));
-    return QIcon(pm);
+    renderer.render(&p, QRectF(0, 0, px, px));
+    p.end();
+    pm.setDevicePixelRatio(dpr);
+    return pm;
+}
+
+QIcon appIcon()
+{
+    QIcon icon;
+    for (int s : {16, 20, 24, 32, 48, 64, 128, 256}) {
+        QSvgRenderer renderer(s <= 32 ? QStringLiteral(":/icons/synkro-small.svg") : QStringLiteral(":/icons/synkro.svg"));
+        QPixmap pm(s, s);
+        pm.fill(Qt::transparent);
+        QPainter p(&pm);
+        p.setRenderHint(QPainter::Antialiasing);
+        renderer.render(&p, QRectF(0, 0, s, s));
+        p.end();
+        icon.addPixmap(pm);
+    }
+    return icon;
+}
+
+QIcon trayIcon(const QColor& status)
+{
+    // Vários tamanhos: o Windows escolhe conforme a escala da tela (16, 20, 24, 32 px).
+    QIcon icon;
+    for (int s : {16, 20, 24, 32, 48, 64}) {
+        QSvgRenderer renderer(QStringLiteral(":/icons/synkro-small.svg"));
+        QPixmap pm(s, s);
+        pm.fill(Qt::transparent);
+        QPainter p(&pm);
+        p.setRenderHint(QPainter::Antialiasing);
+        renderer.render(&p, QRectF(0, 0, s, s));
+        // Ponto de estado com borda clara, legível sobre a barra de tarefas escura ou clara.
+        const qreal d = s * 0.5;
+        const QRectF dot(s - d, s - d, d, d);
+        p.setPen(QPen(QColor(Qt::white), qMax(1.0, s / 16.0)));
+        p.setBrush(status);
+        p.drawEllipse(dot.adjusted(0.5, 0.5, -0.5, -0.5));
+        p.end();
+        icon.addPixmap(pm);
+    }
+    return icon;
 }
 
 } // namespace icons

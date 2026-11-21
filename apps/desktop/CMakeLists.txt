@@ -30,11 +30,19 @@ else()
     set(SYNKRO_DESKTOP_EXECUTION_LEVEL asInvoker)
 endif()
 set(SYNKRO_DESKTOP_MANIFEST "${CMAKE_CURRENT_BINARY_DIR}/synkro-desktop.manifest")
+set(SYNKRO_ICON "${PROJECT_SOURCE_DIR}/assets/icons/synkro.ico")
 configure_file(synkro-desktop.manifest.in "${SYNKRO_DESKTOP_MANIFEST}" @ONLY)
 configure_file(synkro-desktop.rc.in "${CMAKE_CURRENT_BINARY_DIR}/synkro-desktop.rc" @ONLY)
 target_sources(synkro-desktop PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/synkro-desktop.rc")
 target_compile_definitions(synkro-desktop PRIVATE
     SYNKRO_DESKTOP_REQUIRE_ADMIN=$<BOOL:${SYNKRO_DESKTOP_REQUIRE_ADMIN}>)
+
+# Ícone do app (assets/icons; regenerar o .ico com tools/icongen) para a janela,
+# a barra lateral e a bandeja.
+qt_add_resources(synkro-desktop "synkro_icons"
+    PREFIX "/icons"
+    BASE "${PROJECT_SOURCE_DIR}/assets/icons"
+    FILES "${PROJECT_SOURCE_DIR}/assets/icons/synkro.svg" "${PROJECT_SOURCE_DIR}/assets/icons/synkro-small.svg")
 target_link_libraries(synkro-desktop PRIVATE Synkro::Core Qt6::Widgets Qt6::Concurrent Qt6::Svg Qt6::Network)
 synkro_configure_target(synkro-desktop)
 

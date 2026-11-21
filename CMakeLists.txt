@@ -46,6 +46,7 @@ add_subdirectory(apps/worker)
 if(SYNKRO_BUILD_DESKTOP)
     find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets)
     add_subdirectory(apps/desktop)
+    add_subdirectory(tools/icongen EXCLUDE_FROM_ALL) # só é compilado quando pedido (--target icongen)
 endif()
 
 if(SYNKRO_BUILD_TESTS)

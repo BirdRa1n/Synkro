@@ -43,7 +43,7 @@ const NavEntry kNav[] = {
 MainWindow::MainWindow()
 {
     setWindowTitle(QStringLiteral("Synkro"));
-    setWindowIcon(icons::trayIcon(QColor("#4338CA")));
+    setWindowIcon(icons::appIcon());
     resize(1320, 880);
     setMinimumSize(960, 640);
 
@@ -218,7 +218,7 @@ void MainWindow::refreshNavIcons()
     for (auto* b : m_themeButtons)
         b->setIcon(icons::icon(b->property("iconName").toString(), b->isChecked() ? QColor(Qt::white) : t.navInk, 16));
     if (auto* logo = findChild<QLabel*>(QStringLiteral("logo")))
-        logo->setPixmap(icons::pixmap(QStringLiteral("shield-check"), Qt::white, 30));
+        logo->setPixmap(icons::appPixmap(44));
 }
 
 void MainWindow::updateTray()
@@ -368,9 +368,6 @@ void MainWindow::saveScreenshots(const QString& dir)
         RecoveryKeyDialog key(QStringLiteral("HD Externo 1"), QStringLiteral("4TX2-WMS6-WP7P-NLLF-LAA3-YB77-3LNW-GDQB"), true,
                               QString(), this);
         shoot(&key, QStringLiteral("12-chave-recuperacao.png"));
-        for (auto* b : key.findChildren<QPushButton*>())
-            if (b->text() == QStringLiteral("Copiar"))
-                b->click(); // confere a marcação "fora do histórico" na área de transferência
     }
     if (!AppContext::instance().config().global.vaults.empty()) {
         RemoveVaultDialog remove(AppContext::instance().config().global.vaults.front().id, L"E:\\", this);

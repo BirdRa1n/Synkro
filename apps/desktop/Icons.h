@@ -12,7 +12,13 @@ namespace icons {
 QIcon icon(const QString& name, const QColor& color, int size = 22);
 QPixmap pixmap(const QString& name, const QColor& color, int size = 22);
 
-// Ícone da bandeja: escudo sobre um círculo na cor do estado.
+// Ícone do Synkro (porta de cofre, assets/icons): desenho simplificado até
+// 32 px, completo acima disso.
+QPixmap appPixmap(int size);
+QIcon appIcon();
+
+// Ícone da bandeja: o do Synkro com um ponto na cor do estado (verde, amarelo
+// ou vermelho) no canto inferior direito.
 QIcon trayIcon(const QColor& status);
 
 } // namespace icons

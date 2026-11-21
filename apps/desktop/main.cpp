@@ -5,6 +5,7 @@
 // (registrar tarefas no Agendador) são delegadas ao synkro-worker com UAC.
 
 #include "AppContext.h"
+#include "Icons.h"
 #include "MainWindow.h"
 #include "Theme.h"
 
@@ -20,6 +21,7 @@ int main(int argc, char* argv[])
     QApplication::setOrganizationName(QStringLiteral("Synkro"));
     QApplication::setApplicationName(QStringLiteral("Synkro Desktop"));
     QApplication::setApplicationVersion(QString::fromLatin1(synkro::versionString()));
+    QApplication::setWindowIcon(icons::appIcon()); // janelas e diálogos
     QApplication::setQuitOnLastWindowClosed(false); // continua na bandeja
 
     QCommandLineParser parser;

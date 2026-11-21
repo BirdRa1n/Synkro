@@ -45,6 +45,7 @@ OutputBaseFilename=Synkro-Setup-{#AppVersion}
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=..\assets\icons\synkro.ico
 DisableProgramGroupPage=yes
 DisableReadyPage=no
 CloseApplications=no

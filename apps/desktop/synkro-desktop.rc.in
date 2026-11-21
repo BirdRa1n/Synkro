@@ -1,4 +1,7 @@
 // Recursos do Synkro Desktop (gerado pelo CMake).
 #include <winuser.h>
 
+// Primeiro ícone do executável: o que o Explorer, a barra de tarefas e os atalhos mostram.
+1 ICON "@SYNKRO_ICON@"
+
 CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "@SYNKRO_DESKTOP_MANIFEST@"
