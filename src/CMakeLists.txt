@@ -33,6 +33,13 @@ add_library(synkro_core STATIC
     core/Version.h
     core/Version.cpp
 
+    crypto/Crypto.h
+    crypto/Crypto.cpp
+    crypto/FileCipher.h
+    crypto/FileCipher.cpp
+    crypto/VaultKey.h
+    crypto/VaultKey.cpp
+
     database/DatabaseBackup.h
     database/DatabaseBackup.cpp
     database/DatabaseRestore.h

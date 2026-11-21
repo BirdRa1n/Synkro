@@ -20,6 +20,7 @@ enum class ErrorCode {
     VerificationFailed,
     Corrupted,
     Unsupported,
+    KeyRequired,   // cofre cifrado e a chave não está disponível nesta máquina
     Internal,
 };
 

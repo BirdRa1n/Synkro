@@ -23,6 +23,7 @@ const char* nameOf(ErrorCode code) noexcept
     case ErrorCode::VerificationFailed:      return "verification_failed";
     case ErrorCode::Corrupted:               return "corrupted";
     case ErrorCode::Unsupported:             return "unsupported";
+    case ErrorCode::KeyRequired:             return "key_required";
     case ErrorCode::Internal:                return "internal";
     }
     return "unknown";
