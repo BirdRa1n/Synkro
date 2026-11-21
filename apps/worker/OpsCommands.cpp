@@ -10,6 +10,7 @@
 #include "config/ShutdownPolicy.h"
 #include "config/Values.h"
 #include "core/Paths.h"
+#include "core/Version.h"
 #include "database/DatabaseBackup.h"
 #include "database/DatabaseRestore.h"
 #include "database/DumpStore.h"
@@ -17,6 +18,7 @@
 #include "crypto/VaultKey.h"
 #include "engine/Scrub.h"
 #include "notify/Notifier.h"
+#include "support/Doctor.h"
 #include "vault/Vault.h"
 #include "engine/VaultOps.h"
 #include "platform/windows/Locks.h"
@@ -33,6 +35,10 @@
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QSysInfo>
+#include <QTextStream>
 #include <QTimeZone>
 
 #include <iostream>
@@ -372,6 +378,184 @@ int cmdMaintenance(const QStringList& args)
 
     // 5. Notificações externas (novos alertas, lembretes, relatório diário, reenvios).
     notifyChannels(set, *state);
+    return ExitOk;
+}
+
+namespace {
+
+QString levelTag(synkro::support::CheckLevel l)
+{
+    switch (l) {
+    case synkro::support::CheckLevel::Ok:   return QStringLiteral("[ ok ]");
+    case synkro::support::CheckLevel::Info: return QStringLiteral("[info]");
+    case synkro::support::CheckLevel::Warn: return QStringLiteral("[ !! ]");
+    case synkro::support::CheckLevel::Fail: return QStringLiteral("[ XX ]");
+    }
+    return QStringLiteral("[ ?? ]");
+}
+
+void printDoctor(QTextStream& s, const std::vector<synkro::support::DoctorCheck>& checks)
+{
+    std::string area;
+    for (const auto& c : checks) {
+        if (c.area != area) {
+            area = c.area;
+            s << "\n" << q(area).toUpper() << "\n";
+        }
+        s << "  " << levelTag(c.level) << " " << q(c.title) << "\n";
+        if (!c.detail.empty())
+            s << "         " << q(c.detail) << "\n";
+    }
+}
+
+std::vector<synkro::support::DoctorCheck> doctorFor(const synkro::config::ConfigSet& set)
+{
+    synkro::support::DoctorOptions opt;
+    opt.workerExe = QDir::toNativeSeparators(QCoreApplication::applicationFilePath()).toStdWString();
+    return synkro::support::runDoctor(set, opt);
+}
+
+} // namespace
+
+int cmdDoctor(const QStringList& args)
+{
+    QCommandLineParser p;
+    p.addOption({QStringLiteral("config-dir"), QStringLiteral("Pasta de configuração."), QStringLiteral("pasta")});
+    if (!parseSub(p, args))
+        return (usage(), ExitUsage);
+    synkro::config::ConfigSet set;
+    loadAndReport(configDirFrom(p), set, true);
+    const auto checks = doctorFor(set);
+    printDoctor(out(), checks);
+    const auto worst = synkro::support::worst(checks);
+    std::size_t fails = 0, warns = 0;
+    for (const auto& c : checks) {
+        fails += c.level == synkro::support::CheckLevel::Fail;
+        warns += c.level == synkro::support::CheckLevel::Warn;
+    }
+    out() << "\n"
+          << (worst == synkro::support::CheckLevel::Fail
+                  ? QStringLiteral("NÃO PRONTO: %1 falha(s) e %2 aviso(s) — corrija as falhas antes de deixar o PDV")
+                  : worst == synkro::support::CheckLevel::Warn
+                        ? QStringLiteral("PRONTO COM RESSALVAS: %1 falha(s) e %2 aviso(s) — confira os avisos")
+                        : QStringLiteral("PRONTO: %1 falha(s) e %2 aviso(s)"))
+                 .arg(fails)
+                 .arg(warns)
+          << Qt::endl;
+    return worst == synkro::support::CheckLevel::Fail ? ExitFailure
+           : worst == synkro::support::CheckLevel::Warn ? ExitDegraded
+                                                        : ExitOk;
+}
+
+int cmdDiag(const QStringList& args)
+{
+    QCommandLineParser p;
+    p.addOption({QStringLiteral("config-dir"), QStringLiteral("Pasta de configuração."), QStringLiteral("pasta")});
+    p.addOption({QStringLiteral("to"), QStringLiteral("Arquivo do relatório."), QStringLiteral("arquivo")});
+    if (!parseSub(p, args))
+        return (usage(), ExitUsage);
+    const std::wstring dir = configDirFrom(p);
+    const QDateTime now = QDateTime::currentDateTime();
+    const QString file = p.isSet(QStringLiteral("to"))
+                             ? p.value(QStringLiteral("to"))
+                             : QStringLiteral("synkro-diagnostico-%1-%2.txt")
+                                   .arg(QSysInfo::machineHostName(), now.toString(QStringLiteral("yyyyMMdd-HHmm")));
+    QFile f(file);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+        err() << "não foi possível criar " << file << ": " << f.errorString() << Qt::endl;
+        return ExitFailure;
+    }
+    QTextStream s(&f);
+    s.setEncoding(QStringConverter::Utf8);
+    s.setGenerateByteOrderMark(true);
+
+    synkro::config::ConfigSet set = synkro::config::loadConfig(dir, {});
+    s << "SYNKRO — RELATÓRIO DE DIAGNÓSTICO\n"
+      << "Não contém senhas nem tokens (a configuração só guarda os nomes dos segredos).\n"
+      << "Contém nomes de servidores, usuários, pastas e e-mails da configuração.\n\n"
+      << "Synkro:       " << synkro::versionString() << "\n"
+      << "Computador:   " << QSysInfo::machineHostName() << "\n"
+      << "Windows:      " << QSysInfo::prettyProductName() << " (" << QSysInfo::kernelVersion() << ")\n"
+      << "Gerado em:    " << now.toString(Qt::ISODate) << " (UTC " << now.toUTC().toString(Qt::ISODate) << ")\n"
+      << "Administrador: " << (synkro::win::isProcessElevated() ? "sim" : "não") << "\n"
+      << "Dados:        " << q(synkro::dataDirectory()) << "\n"
+      << "Configuração: " << q(dir) << "\n";
+
+    s << "\n==== CHECAGEM (doctor) ====\n";
+    printDoctor(s, doctorFor(set));
+
+    s << "\n==== VALIDAÇÃO DA CONFIGURAÇÃO ====\n";
+    if (set.diagnostics.empty())
+        s << "sem erros nem avisos\n";
+    for (const auto& d : set.diagnostics)
+        s << q(synkro::config::formatDiagnostic(d)) << "\n";
+
+    if (auto state = openState()) {
+        s << "\n==== ALERTAS ABERTOS ====\n";
+        const auto alerts = state->openAlerts();
+        if (alerts.empty())
+            s << "nenhum\n";
+        for (const auto& a : alerts)
+            s << a.openedAt.toLocalTime().toString(QStringLiteral("dd/MM HH:mm")) << "  " << synkro::nameOf(a.severity) << "  "
+              << q(a.code) << "/" << q(a.subject) << "  " << q(a.message) << "\n";
+
+        s << "\n==== EXECUÇÕES RECENTES ====\n";
+        for (const auto& r : state->recentRuns(60)) {
+            s << r.startedAt.toLocalTime().toString(QStringLiteral("dd/MM HH:mm")) << "  " << q(r.jobId).leftJustified(22) << " "
+              << q(r.status).leftJustified(9) << " " << q(r.trigger);
+            if (r.finishedAt.isValid())
+                s << "  " << r.startedAt.secsTo(r.finishedAt) << " s";
+            if (!r.error.empty())
+                s << "\n      " << q(r.error);
+            s << "\n";
+        }
+
+        s << "\n==== COFRES (último contato) ====\n";
+        for (const auto& v : set.global.vaults) {
+            const auto seen = state->vaultSeen(QString::fromStdString(v.vaultId));
+            s << q(v.id).leftJustified(20) << " " << q(v.label) << "  ";
+            if (seen && seen->lastSeenAt.isValid())
+                s << "visto " << seen->lastSeenAt.toLocalTime().toString(QStringLiteral("dd/MM HH:mm")) << " em " << q(seen->location)
+                  << ", último sucesso "
+                  << (seen->lastSuccessAt.isValid() ? seen->lastSuccessAt.toLocalTime().toString(QStringLiteral("dd/MM HH:mm"))
+                                                    : QStringLiteral("—"))
+                  << ", " << humanBytes(seen->freeBytes) << " livres";
+            else
+                s << "nunca visto";
+            s << "\n";
+        }
+
+        s << "\n==== NOTIFICAÇÕES RECENTES ====\n";
+        for (const auto& n : state->recentNotifications(30)) {
+            s << n.createdAt.toLocalTime().toString(QStringLiteral("dd/MM HH:mm")) << "  " << q(n.channel) << "  " << q(n.kind)
+              << "  " << q(n.status) << "  tentativas " << n.attempts;
+            if (!n.lastError.empty())
+                s << "  erro: " << q(n.lastError);
+            s << "\n";
+        }
+    }
+
+    s << "\n==== TAREFAS NO AGENDADOR (\\Synkro) ====\n";
+    if (auto tasks = synkro::win::listTasks()) {
+        for (const auto& t : tasks.value())
+            s << q(t) << "\n";
+    } else {
+        s << "não listadas: " << q(tasks.error().message) << "\n";
+    }
+
+    s << "\n==== ARQUIVOS DE CONFIGURAÇÃO ====\n";
+    std::vector<std::wstring> files{L"synkro.yml"};
+    for (const auto& name : synkro::ops::listFiles(synkro::win::joinPath(dir, L"jobs"), L".yml"))
+        files.push_back(L"jobs\\" + name);
+    for (const auto& rel : files) {
+        s << "\n---- " << q(rel) << " ----\n";
+        auto text = synkro::win::readWholeFile(synkro::win::joinPath(dir, rel), 1u << 20);
+        s << (text ? QString::fromStdString(text.value()) : QStringLiteral("(não lido: ") + q(text.error().message) + ")") << "\n";
+    }
+    s.flush();
+    f.close();
+    out() << "relatório gravado em " << QDir::toNativeSeparators(QFileInfo(file).absoluteFilePath())
+          << " (sem senhas; contém nomes de servidores, pastas e e-mails da configuração)" << Qt::endl;
     return ExitOk;
 }
 

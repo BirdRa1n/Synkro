@@ -68,6 +68,8 @@ void usage()
           << "  restore-test --job ID [--vault V] [--database DB]   teste de restauração num banco temporário\n"
           << "  runs --vault V --job ID      dumps --vault V --job ID      verify --vault V --job ID [--sample N]\n"
           << "\nDiagnóstico\n"
+          << "  doctor                                               este PDV está pronto? (rode como administrador)\n"
+          << "  diag [--to ARQUIVO.txt]                              relatório para o suporte (sem senhas)\n"
           << "  hash <arquivo> [--uncached]   scan <pasta> [--ids]   copy <origem> <destino> [--uncached]\n"
           << "\nSaída: 0 sucesso · 1 degradado · 2 falha · 3 bloqueado · 4 já em execução · 64 uso incorreto\n"
           << Qt::endl;
