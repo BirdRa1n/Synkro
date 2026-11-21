@@ -64,6 +64,16 @@ Bibliotecas de YAML não preservam comentários ao regravar um arquivo. Para nã
 - arquivos criados pelo desktop recebem um cabeçalho `# Gerado pelo Synkro Desktop` e o hash do conteúdo gravado;
 - se o desktop detectar que o arquivo foi **alterado à mão** (hash diferente), a tarefa abre no **editor YAML integrado** (com realce, validação ao digitar e o painel "O que esta tarefa vai fazer"), em vez do formulário — o arquivo nunca é regravado sem que o usuário veja o resultado.
 
+**Ao adicionar um cofre** (Cofres → Adicionar cofre), o desktop pergunta como incluí-lo no `synkro.yml`:
+
+- **Adicionar automaticamente:**
+  - arquivo gerado pelo desktop (ou ainda inexistente): é regravado com o cofre, que entra nos cofres padrão se for o primeiro;
+  - arquivo editado à mão: só o item novo é inserido no fim da lista `vaults`, na mesma indentação, e comentários, ordem e o resto do arquivo ficam intactos.
+
+  O resultado é validado antes de gravar; se a lista estiver num formato que não dá para editar com segurança (como `vaults: [{...}]` em linha), essa opção fica indisponível.
+- **Revisar no editor YAML:** abre o `synkro.yml` já com o cofre inserido, ainda **sem salvar**, para conferir e ajustar (rodízio, limite de ausência, espaço livre). **Salvar** grava; **Cancelar** não altera nada.
+- **Depois:** o cofre fica pronto no disco, fora da configuração. Basta adicioná-lo de novo, e ele é reaproveitado.
+
 ### 3.2. Autocompletar em editores externos
 
 Cada arquivo começa com:
