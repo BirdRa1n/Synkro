@@ -66,8 +66,10 @@ Source: "{#PackageDir}\*"; DestDir: "{tmp}\pacote"; Excludes: "install.ps1"; Fla
 Source: "{#PackageDir}\install.ps1"; DestDir: "{tmp}\pacote"; Flags: ignoreversion; AfterInstall: RunInstallScript
 
 [Run]
-; Sem runasoriginaluser: o desktop exige administrador, e o instalador já está elevado.
-Filename: "{autopf}\Synkro\synkro-desktop.exe"; Description: "Abrir o Synkro"; Flags: nowait postinstall
+; runascurrentuser: itens "postinstall" rodam, por padrão, como o usuário que
+; abriu o instalador SEM elevação (runasoriginaluser) — o Synkro abria sem
+; administrador. Assim ele herda a elevação do instalador.
+Filename: "{autopf}\Synkro\synkro-desktop.exe"; Description: "Abrir o Synkro"; Flags: nowait postinstall runascurrentuser
 
 [Code]
 procedure RunInstallScript;
