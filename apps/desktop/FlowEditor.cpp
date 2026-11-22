@@ -1159,7 +1159,7 @@ void FlowEditorDialog::loadSource()
     m_srcFilesBox->setVisible(files);
     m_srcDbInfo->setVisible(!files);
     if (files) {
-        m_srcList->setSources(m_base.files.source, m_base.files.moreSources);
+        m_srcList->setSources(m_base.files);
         QStringList ex;
         for (const auto& e : m_base.files.exclude)
             ex << QString::fromStdWString(e);
@@ -1181,8 +1181,7 @@ void FlowEditorDialog::storeSource()
         return;
     m_base.name = m_srcName->text().trimmed().toStdString();
     if (m_base.type == "files") {
-        m_base.files.source = m_srcList->mainSource();
-        m_base.files.moreSources = m_srcList->moreSources();
+        m_srcList->applyTo(m_base.files);
         m_base.files.exclude.clear();
         for (const auto& p : m_srcExclude->text().split(',', Qt::SkipEmptyParts))
             if (!p.trimmed().isEmpty())

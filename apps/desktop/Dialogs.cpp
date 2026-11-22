@@ -1060,8 +1060,7 @@ synkro::config::JobConfig JobWizard::buildJob() const
     j.shutdownAfter = m_shutdown->isChecked();
 
     if (j.type == "files") {
-        j.files.source = m_sources->mainSource();
-        j.files.moreSources = m_sources->moreSources();
+        m_sources->applyTo(j.files);
         for (const auto& p : m_exclude->text().split(',', Qt::SkipEmptyParts))
             j.files.exclude.push_back(p.trimmed().toStdWString());
         j.files.sentinelFile = m_sentinel->text().trimmed().toStdWString();

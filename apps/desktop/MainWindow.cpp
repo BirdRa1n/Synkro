@@ -25,6 +25,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QSessionManager>
 #include <QMenu>
 #include <QStackedWidget>
 #include <QTimer>
@@ -150,6 +151,12 @@ MainWindow::MainWindow()
         m_tray->show();
     }
 
+    // Windows desligando ou saindo da sessão: o Qt fecha as janelas visíveis e,
+    // se uma recusa (o closeEvent abaixo só esconde na bandeja), CANCELA o
+    // desligamento — o computador ficava ligado depois do backup com a janela
+    // do Synkro aberta. Na saída da sessão, fechar de verdade.
+    connect(qApp, &QGuiApplication::commitDataRequest, this, [this](QSessionManager&) { setProperty("quitting", true); });
+
     connect(&Theme::instance(), &Theme::changed, this, [this] {
         const ThemeMode order[] = {ThemeMode::Light, ThemeMode::Dark, ThemeMode::System};
         for (size_t i = 0; i < m_themeButtons.size(); ++i)
@@ -262,7 +269,7 @@ void MainWindow::runJob(const QString& jobId)
 void MainWindow::closeEvent(QCloseEvent* event)
 {
     // Fechar a janela mantém o Synkro na bandeja, de olho nos alertas.
-    if (m_tray && m_tray->isVisible() && !property("quitting").toBool()) {
+    if (m_tray && m_tray->isVisible() && !property("quitting").toBool() && !qApp->isSavingSession()) {
         hide();
         if (!m_trayNoticeShown) {
             m_tray->showMessage(QStringLiteral("Synkro"),
@@ -305,8 +312,13 @@ void MainWindow::saveScreenshots(const QString& dir)
         shoot(&wizard, QStringLiteral("7-assistente-inicio.png"));
         wizard.show();
         wizard.next();
-        if (auto* list = wizard.findChild<SourceListEditor*>())
-            list->setSources(L"C:\\PDV", {{L"D:\\Fiscal\\XML", {}, L"XML"}, {L"E:\\Exportacao", L"exportacao-erp", L"exportacao-erp"}});
+        if (auto* list = wizard.findChild<SourceListEditor*>()) {
+            synkro::config::FilesJob demo;
+            demo.source = L"C:\\PDV";
+            demo.sourceAlias = L"PDV";
+            demo.moreSources = {{L"D:\\Fiscal\\XML", {}, L"XML"}, {L"E:\\Exportacao", L"exportacao-erp", L"exportacao-erp"}};
+            list->setSources(demo);
+        }
         shoot(&wizard, QStringLiteral("7-assistente-origem.png"));
         wizard.show(); // ao reabrir, o assistente volta ao início
         wizard.next();

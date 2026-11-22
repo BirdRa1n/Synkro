@@ -69,8 +69,9 @@ SourceListEditor::SourceListEditor(QWidget* parent) : QWidget(parent)
     row->addWidget(remove);
     row->addStretch(1);
     v->addLayout(row);
-    auto* hint = ui::label(QStringLiteral("A primeira pasta fica na raiz do cofre; cada outra ganha uma subpasta com o nome "
-                                          "da coluna \"No cofre\" (dá para editar). Os filtros valem para todas."),
+    auto* hint = ui::label(QStringLiteral("Com uma pasta, os arquivos ficam na raiz do cofre. Com várias, cada pasta ganha "
+                                          "uma subpasta com o nome da coluna \"No cofre\" (dá para editar). Os filtros "
+                                          "valem para todas."),
                            "muted");
     hint->setWordWrap(true);
     v->addWidget(hint);
@@ -97,19 +98,25 @@ void SourceListEditor::addRow(const QString& path, const QString& name)
 void SourceListEditor::renumber()
 {
     m_loading = true;
+    const bool single = m_table->rowCount() == 1;
     for (int r = 0; r < m_table->rowCount(); ++r) {
         auto* n = m_table->item(r, 1);
         if (!n)
             continue;
-        if (r == 0) {
+        if (single) {
+            // Guarda o nome escolhido (se houver) para quando voltar a ter várias.
+            if (n->text() != QLatin1String("(raiz)"))
+                n->setData(Qt::UserRole, n->text());
             n->setText(QStringLiteral("(raiz)"));
             n->setFlags(n->flags() & ~Qt::ItemIsEditable);
             n->setForeground(tk().muted);
         } else {
             n->setFlags(n->flags() | Qt::ItemIsEditable);
             n->setForeground(tk().text);
-            if (n->text().isEmpty() || n->text() == QLatin1String("(raiz)"))
-                n->setText(folderName(m_table->item(r, 0)->text()));
+            if (n->text().isEmpty() || n->text() == QLatin1String("(raiz)")) {
+                const QString kept = n->data(Qt::UserRole).toString();
+                n->setText(kept.isEmpty() ? folderName(m_table->item(r, 0)->text()) : kept);
+            }
         }
     }
     m_loading = false;
@@ -125,13 +132,14 @@ void SourceListEditor::addFolder()
     emit changed();
 }
 
-void SourceListEditor::setSources(const std::wstring& main, const std::vector<SourceFolder>& more)
+void SourceListEditor::setSources(const FilesJob& f)
 {
     m_table->setRowCount(0);
-    if (!main.empty())
-        addRow(QString::fromStdWString(main), QString());
-    for (const auto& s : more)
+    if (!f.source.empty())
+        addRow(QString::fromStdWString(f.source), QString::fromStdWString(f.sourceName));
+    for (const auto& s : f.moreSources)
         addRow(QString::fromStdWString(s.path), QString::fromStdWString(s.alias.empty() ? s.name : s.alias));
+    renumber();
 }
 
 bool SourceListEditor::isEmpty() const
@@ -139,28 +147,32 @@ bool SourceListEditor::isEmpty() const
     return m_table->rowCount() == 0;
 }
 
-std::wstring SourceListEditor::mainSource() const
+void SourceListEditor::applyTo(FilesJob& f) const
 {
-    if (m_table->rowCount() == 0)
-        return {};
-    return QDir::toNativeSeparators(m_table->item(0, 0)->text().trimmed()).toStdWString();
-}
-
-std::vector<SourceFolder> SourceListEditor::moreSources() const
-{
-    std::vector<SourceFolder> out;
-    for (int r = 1; r < m_table->rowCount(); ++r) {
+    f.source.clear();
+    f.sourceName.clear();
+    f.sourceAlias.clear();
+    f.moreSources.clear();
+    const bool single = m_table->rowCount() == 1;
+    for (int r = 0; r < m_table->rowCount(); ++r) {
         SourceFolder s;
         const QString path = m_table->item(r, 0)->text().trimmed();
         s.path = QDir::toNativeSeparators(path).toStdWString();
-        const QString name = m_table->item(r, 1) ? m_table->item(r, 1)->text().trimmed() : QString();
+        QString name = m_table->item(r, 1) ? m_table->item(r, 1)->text().trimmed() : QString();
+        if (single || name == QLatin1String("(raiz)"))
+            name.clear();
         // Só grava `name` quando difere do nome da pasta (YAML mais limpo).
         if (!name.isEmpty() && name != folderName(path))
             s.name = name.toStdWString();
         s.alias = name.isEmpty() ? folderName(path).toStdWString() : name.toStdWString();
-        out.push_back(std::move(s));
+        if (r == 0) {
+            f.source = s.path;
+            f.sourceName = s.name;
+            f.sourceAlias = s.alias;
+        } else {
+            f.moreSources.push_back(std::move(s));
+        }
     }
-    return out;
 }
 
 // ============================================================================

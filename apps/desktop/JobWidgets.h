@@ -11,17 +11,16 @@ class QLabel;
 class QTableWidget;
 class QTimeEdit;
 
-// Lista de pastas de origem. A primeira é a principal (fica na raiz do cofre,
-// como numa tarefa de uma pasta só); as demais ganham uma subpasta no cofre,
-// com o nome da própria pasta ou outro informado na coluna "No cofre".
+// Lista de pastas de origem. Uma pasta só: fica na raiz do cofre. Várias:
+// cada uma ganha uma subpasta no cofre, com o nome da própria pasta ou outro
+// informado na coluna "No cofre".
 class SourceListEditor : public QWidget {
     Q_OBJECT
 public:
     explicit SourceListEditor(QWidget* parent = nullptr);
 
-    void setSources(const std::wstring& main, const std::vector<synkro::config::SourceFolder>& more);
-    std::wstring mainSource() const;
-    std::vector<synkro::config::SourceFolder> moreSources() const;
+    void setSources(const synkro::config::FilesJob& files);
+    void applyTo(synkro::config::FilesJob& files) const; // source, sourceName/Alias e moreSources
     bool isEmpty() const;
 
 signals:
