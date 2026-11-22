@@ -575,11 +575,15 @@ Códigos de saída documentados (0 sucesso, 1 degradado, 2 falha, 3 bloqueado po
 
 Permitido somente se:
 
-1. o run terminou com **Sucesso** (todos os `min_vaults_ok` atendidos);
+1. o run terminou com **Sucesso**, ou **Degradado só porque um cofre de rodízio estava desconectado** (ausência esperada no rodízio; falha de gravação, guarda ou disco errado continuam impedindo);
 2. nenhum guarda foi acionado;
-3. não há outra tarefa Synkro em execução.
+3. o grupo da tarefa está em `shutdown.allowed_after` (quando a lista existe).
 
-Fluxo: aviso na bandeja com contagem regressiva (padrão 120 s) e botão **Cancelar**; depois `InitiateShutdownW` com motivo planejado. Em caso de Degradado/Falha, o PC **não** desliga e o alerta fica visível para o próximo usuário.
+**Outra tarefa em execução** (ex.: duas tarefas às 22:00) ou **uma tarefa que depende desta** não cancelam o pedido. Ele fica **pendente** no banco de estado, e a tarefa que terminar por último desliga. O pedido expira em 6 horas. Antes da 0.9.0-beta.7, o pedido era descartado nesse caso, e o PC ficava ligado.
+
+Fluxo: `InitiateShutdownW` com contagem regressiva visível (padrão 120 s, `shutdown.countdown`), motivo planejado e, por padrão, `SHUTDOWN_FORCE_OTHERS` (`shutdown.force_close_apps: true`, como `shutdown /s /t`). Sem forçar, um programa aberto com algo por salvar segura o desligamento na tela "programas impedindo o desligamento", e num PDV sem ninguém isso dura a noite inteira. Para cancelar: `synkro-worker shutdown cancel` ou `shutdown /a`. O próprio Synkro Desktop fecha de verdade quando o Windows encerra a sessão; antes, ele "ia para a bandeja" e vetava o desligamento se a janela estivesse aberta.
+
+Cada decisão (desligou, ficou pendente ou não desligou, e por quê) vai para a saída do worker e para o **Visualizador de Eventos** (log Aplicativo, origem Synkro, ID 1001). Em caso de Degradado/Falha, o PC **não** desliga e o alerta fica visível para o próximo usuário.
 
 ---
 

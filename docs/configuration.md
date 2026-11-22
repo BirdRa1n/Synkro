@@ -177,6 +177,7 @@ maintenance:
 shutdown:
   countdown: 120s
   allowed_after: [noite]              # grupos de tarefas que podem desligar o PC (ver job.group)
+  force_close_apps: true              # fecha programas abertos ao fim da contagem (padrão); false = espera cada um aceitar
 
 logging:
   level: info                         # debug | info | warn | error
@@ -391,18 +392,31 @@ Troque `source` por `sources` para copiar mais de uma pasta com o mesmo agendame
 
 ```yaml
 sources:
-  - "C:/PDV"                                       # 1ª: a pasta principal, na raiz do cofre
-  - "D:/Fiscal/XML"                                # no cofre em XML\
+  - "C:/PDV"                                         # no cofre em PDV\
+  - "D:/Fiscal/XML"                                  # no cofre em XML\
   - { path: "E:/Exportacao", name: exportacao-erp }  # no cofre em exportacao-erp\
 ```
 
-- **Compatível com tarefas antigas:** `source: "C:/PDV"` continua valendo e é o mesmo que uma lista de um item. A 1ª pasta da lista fica na **raiz** do cofre, exatamente como numa tarefa de uma pasta só. Por isso, acrescentar pastas a uma tarefa que já tem backups não move nem recopia nada do que já está lá.
-- Cada pasta adicional fica numa **subpasta** do cofre com o nome da própria pasta, ou com `name:` quando você quiser outro nome (ou houver duas pastas com o mesmo nome). Esse nome é permanente: trocá-lo depois faz o Synkro tratar os arquivos como excluídos e copiados de novo, o que a guarda de exclusão em massa pode bloquear.
-- `include`, `exclude` e `guards` valem para todas as pastas, com caminhos relativos a cada uma. O `sentinel_file` usa o caminho como fica no cofre (ex.: `XML/controle.txt` para um arquivo da pasta `D:/Fiscal/XML`).
-- **Proteções:** se qualquer uma das pastas sumir, a execução falha sem tocar nos cofres. Se uma delas ficar vazia, mas tinha arquivos no último backup (pendrive ou compartilhamento que não montou), a execução é bloqueada, mesmo que as outras estejam normais. Se a pasta principal tiver um item com o nome de uma pasta adicional, a execução para e pede outro `name`.
+```text
+current\                    uma pasta só (source:)       várias pastas (sources:)
+                            current\NFe\...              current\PDV\NFe\...
+                            current\Config\...           current\PDV\Config\...
+                                                         current\XML\...
+                                                         current\exportacao-erp\...
+```
+
+- **Uma pasta só:** os arquivos ficam na raiz do cofre, como sempre foi. `source: "C:/PDV"` é o mesmo que uma lista de um item.
+- **Várias pastas:** cada uma fica na sua **subpasta** do cofre, inclusive a primeira, com o nome da própria pasta ou com `name:` quando você quiser outro (ou houver duas com o mesmo nome). Nada se mistura. Esse nome é permanente: trocá-lo depois faz o Synkro tratar os arquivos como excluídos e copiados de novo, o que a guarda de exclusão em massa pode bloquear.
+- **Tarefas antigas:** quando uma tarefa de uma pasta só ganha a segunda pasta, o cofre é **reorganizado na próxima execução sem recopiar nada**. A pasta inteira é renomeada para dentro da subpasta nova, uma operação instantânea no disco, por maior que seja. O mesmo vale para cofres da 0.9.0-beta.6, que guardavam a pasta principal na raiz com as adicionais ao lado.
+  - **Histórico:** a reorganização aparece como uma execução própria ("Cofre reorganizado…"). Restaurar uma execução de antes dela devolve os arquivos na organização da época.
+  - **Interrupção:** se a reorganização for interrompida (queda de energia), a próxima execução termina o trabalho. Um marcador `layout-migration.json` na pasta da tarefa indica que ela está em andamento.
+  - **Cofre ausente:** um cofre de rodízio fora do local é reorganizado quando voltar.
+  - **Voltar a uma pasta só:** um cofre já organizado em subpastas continua assim, sem reorganização de volta.
+- `include`, `exclude` e `guards` valem para todas as pastas, com caminhos relativos a cada uma. Com várias pastas, o `sentinel_file` usa o caminho como fica no cofre (ex.: `PDV/Config/pdv.ini`).
+- **Proteções:** se qualquer uma das pastas sumir, a execução falha sem tocar nos cofres. Se uma delas ficar vazia, mas tinha arquivos no último backup (pendrive ou compartilhamento que não montou), a execução é bloqueada, mesmo que as outras estejam normais.
 - O snapshot VSS é feito uma vez por volume e vale para todas as pastas daquele disco.
-- Pastas repetidas, uma dentro da outra ou com caminho relativo são recusadas na validação.
-- Restaurar a tarefa inteira devolve a mesma organização: a pasta principal na raiz do destino e cada pasta adicional na sua subpasta.
+- Pastas repetidas, uma dentro da outra, com caminho relativo ou com o mesmo nome no cofre são recusadas na validação. Uma pasta raiz de disco (`C:/`) precisa de `name`.
+- Restaurar a tarefa inteira devolve a mesma organização: uma subpasta por pasta de origem.
 - No app, o assistente (**Pastas de origem**) e o modo fácil (bloco da origem) mostram a lista, com **Adicionar pasta…** e a coluna **No cofre** para escolher o nome.
 
 ---
@@ -673,7 +687,7 @@ shutdown_after: true       # vale para todas as execuções: no domingo, desliga
 | `depends_on` / `depends_mode` | não | — / `always` | Ordem entre tarefas |
 | `timeout` | não | `defaults.timeout` | Tempo máximo da execução |
 | `hooks` | não | — | `before`, `after`, `on_success`, `on_failure` |
-| `shutdown_after` | não | `false` | Desligar após Sucesso |
+| `shutdown_after` | não | `false` | Desligar após Sucesso (ou só com o disco de rodízio fora); com outras tarefas rodando, desliga quando a última terminar — architecture.md §10.4 |
 
 ### 9.2. `type: files`
 
