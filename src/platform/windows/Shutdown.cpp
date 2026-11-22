@@ -32,7 +32,7 @@ bool shutdownDisabledByEnvironment()
     return ::GetEnvironmentVariableW(L"SYNKRO_NO_SHUTDOWN", buf, 8) > 0 && buf[0] == L'1';
 }
 
-Status scheduleShutdown(unsigned long countdownSeconds, const std::wstring& message)
+Status scheduleShutdown(unsigned long countdownSeconds, const std::wstring& message, bool forceApps)
 {
     if (shutdownDisabledByEnvironment())
         return Error::make(ErrorCode::Unsupported, "desligamento desativado por SYNKRO_NO_SHUTDOWN=1");
@@ -41,9 +41,17 @@ Status scheduleShutdown(unsigned long countdownSeconds, const std::wstring& mess
     if (auto st = enableShutdownPrivilege(); !st)
         return st;
     std::wstring msg = message;
-    const DWORD rc = ::InitiateShutdownW(nullptr, msg.data(), countdownSeconds, SHUTDOWN_POWEROFF,
+    // Sem SHUTDOWN_FORCE_OTHERS, um programa aberto com algo por salvar (ou que
+    // recuse fechar) segura o desligamento na tela "programas impedindo o
+    // desligamento" — num PDV sem ninguém, a noite toda.
+    DWORD flags = SHUTDOWN_POWEROFF;
+    if (forceApps)
+        flags |= SHUTDOWN_FORCE_OTHERS;
+    const DWORD rc = ::InitiateShutdownW(nullptr, msg.data(), countdownSeconds, flags,
                                          SHTDN_REASON_MAJOR_APPLICATION | SHTDN_REASON_MINOR_MAINTENANCE
                                              | SHTDN_REASON_FLAG_PLANNED);
+    if (rc == ERROR_SHUTDOWN_IN_PROGRESS || rc == ERROR_SHUTDOWN_IS_SCHEDULED)
+        return Status::success(); // outra tarefa já agendou
     if (rc != ERROR_SUCCESS)
         return errorFromWin32(rc, "agendar desligamento");
     return Status::success();

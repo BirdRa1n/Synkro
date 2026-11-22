@@ -189,10 +189,15 @@ private slots:
     {
         Setup env("shutdown_after: true\ngroup: noite\n");
         ConfigSet set = env.load();
-        const JobConfig& job = *set.findJob("arquivos");
+        const JobConfig job = *set.findJob("arquivos"); // cópia: set.jobs cresce abaixo
         QVERIFY(decideShutdown(set, job, RunStatus::Success, false).shutdown);
         QVERIFY(!decideShutdown(set, job, RunStatus::Degraded, false).shutdown);
+        QVERIFY(!decideShutdown(set, job, RunStatus::Degraded, false).deferred);
+        QVERIFY(decideShutdown(set, job, RunStatus::Degraded, false, true).shutdown); // rodízio fora: esperado
+        QVERIFY(!decideShutdown(set, job, RunStatus::Failed, false, true).shutdown);
+        // Outra tarefa rodando: não desliga agora, mas fica pendente.
         QVERIFY(!decideShutdown(set, job, RunStatus::Success, true).shutdown);
+        QVERIFY(decideShutdown(set, job, RunStatus::Success, true).deferred);
 
         set.global.shutdownAllowedGroups = {"dia"};
         QVERIFY(!decideShutdown(set, job, RunStatus::Success, false).shutdown);
@@ -206,6 +211,25 @@ private slots:
         dependent.dependsOn = {"arquivos"};
         set.jobs.push_back(dependent);
         QVERIFY(!decideShutdown(set, job, RunStatus::Success, false).shutdown);
+        QVERIFY(decideShutdown(set, job, RunStatus::Success, false).deferred);
+
+        // Só o disco de rodízio desconectado ficou sem cópia.
+        VaultConfig rot;
+        rot.id = "rodizio";
+        rot.vaultId = "11111111-1111-4111-8111-111111111111";
+        rot.rotation = true;
+        set.global.vaults.push_back(rot);
+        BackupResult r;
+        VaultRunResult ok;
+        ok.status = VaultRunStatus::Success;
+        ok.location = L"E:\\";
+        VaultRunResult away;
+        away.status = VaultRunStatus::Failed;
+        away.vaultId = QString::fromStdString(rot.vaultId);
+        r.vaults = {ok, away};
+        QVERIFY(onlyRotationVaultsMissing(set, r));
+        r.vaults[1].location = L"F:\\"; // conectado e falhou: não é ausência
+        QVERIFY(!onlyRotationVaultsMissing(set, r));
     }
 
     void configPackageRoundTrip()

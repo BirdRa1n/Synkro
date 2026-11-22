@@ -260,4 +260,16 @@ void reportToEventLog(const AlertRow& alert, bool resolved)
     ::DeregisterEventSource(source);
 }
 
+void reportInfoToEventLog(const std::string& text, bool warning)
+{
+    HANDLE source = ::RegisterEventSourceW(nullptr, L"Synkro");
+    if (!source)
+        return;
+    const std::wstring wide = win::fromUtf8(text);
+    const wchar_t* strings[] = {wide.c_str()};
+    ::ReportEventW(source, warning ? EVENTLOG_WARNING_TYPE : EVENTLOG_INFORMATION_TYPE, 0, 1001, nullptr, 1, 0, strings,
+                   nullptr);
+    ::DeregisterEventSource(source);
+}
+
 } // namespace synkro

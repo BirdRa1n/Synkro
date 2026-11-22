@@ -165,6 +165,9 @@ bool ensureVaultKey(const std::wstring& location)
     return false;
 }
 
+void handleShutdown(const synkro::config::ConfigSet& set, const synkro::config::JobConfig& job,
+                    const synkro::BackupResult& result, const RunOptions& options);
+
 int runConfiguredJob(const synkro::config::ConfigSet& set, const synkro::config::JobConfig& job, const RunOptions& options)
 {
     const QDateTime started = QDateTime::currentDateTimeUtc();
@@ -223,24 +226,83 @@ int runConfiguredJob(const synkro::config::ConfigSet& set, const synkro::config:
         notifyChannels(set, *state);
     }
 
-    if (job.shutdownAfter) {
-        const auto decision = synkro::config::decideShutdown(set, job, result.status, anotherJobRunning(set, job.id));
-        if (!options.allowShutdown) {
+    handleShutdown(set, job, result, options);
+    return exitFor(result.status);
+}
+
+// Desligamento ao final (shutdown_after). Cada decisão vai para a saída e para
+// o Visualizador de Eventos (ID 1001): rodando pelo Agendador, é ali que se vê
+// por que o computador desligou ou não.
+void handleShutdown(const synkro::config::ConfigSet& set, const synkro::config::JobConfig& job,
+                    const synkro::BackupResult& result, const RunOptions& options)
+{
+    constexpr char kPendingKey[] = "shutdown.pending";
+    constexpr qint64 kPendingMaxAgeSeconds = 6 * 3600;
+    const std::string jobName = "\"" + job.name + "\"";
+    auto log = [&](const std::string& text, bool warning = false) {
+        out() << "desligamento: " << q(text) << Qt::endl;
+        if (set.global.alertEventLog)
+            synkro::reportInfoToEventLog("Desligamento após " + jobName + ": " + text, warning);
+    };
+    auto shutdownNow = [&](const std::string& why) {
+        const auto seconds = static_cast<unsigned long>(set.global.shutdownCountdownSeconds);
+        auto st = synkro::win::scheduleShutdown(
+            seconds, L"Synkro: backup concluído. O computador será desligado. Para cancelar: synkro-worker shutdown cancel "
+                     L"(ou shutdown /a).",
+            set.global.shutdownForceApps);
+        if (st)
+            log("agendado em " + std::to_string(seconds) + " s (" + why + "); cancelar: synkro-worker shutdown cancel");
+        else
+            log("não foi possível agendar: " + st.error().message, true);
+        return st.ok();
+    };
+
+    if (!options.allowShutdown) {
+        if (job.shutdownAfter)
             out() << "desligamento ignorado (--no-shutdown)" << Qt::endl;
-        } else if (!decision.shutdown) {
-            out() << "desligamento: " << q(decision.reason) << Qt::endl;
+        return;
+    }
+
+    bool deferredNow = false;
+    if (job.shutdownAfter) {
+        const bool rotationOnly = synkro::config::onlyRotationVaultsMissing(set, result);
+        const auto decision = synkro::config::decideShutdown(set, job, result.status, anotherJobRunning(set, job.id), rotationOnly);
+        if (decision.shutdown) {
+            if (shutdownNow(decision.reason))
+                return;
+        } else if (decision.deferred) {
+            deferredNow = true;
+            if (auto state = openState()) {
+                const std::string value = QDateTime::currentDateTimeUtc().toString(Qt::ISODate).toStdString() + "\t" + job.name;
+                (void)state->setValue(kPendingKey, value);
+            }
+            log(decision.reason);
         } else {
-            const auto seconds = static_cast<unsigned long>(set.global.shutdownCountdownSeconds);
-            auto st = synkro::win::scheduleShutdown(
-                seconds, L"Synkro: backup concluído com sucesso. O computador será desligado. Para cancelar: "
-                         L"synkro-worker shutdown cancel (ou shutdown /a).");
-            if (st)
-                out() << "desligamento agendado em " << seconds << " s (cancelar: synkro-worker shutdown cancel)" << Qt::endl;
-            else
-                err() << "não foi possível agendar o desligamento: " << q(st.error().message) << Qt::endl;
+            log(decision.reason, true);
         }
     }
-    return exitFor(result.status);
+
+    // Pedido pendente de outra tarefa (que terminou enquanto esta rodava):
+    // quem termina por último desliga.
+    if (deferredNow)
+        return;
+    auto state = openState();
+    if (!state)
+        return;
+    const std::string pending = state->getValue(kPendingKey);
+    if (pending.empty())
+        return;
+    const auto tab = pending.find('\t');
+    const QDateTime at = QDateTime::fromString(QString::fromStdString(pending.substr(0, tab)), Qt::ISODate);
+    const std::string requester = tab == std::string::npos ? std::string() : pending.substr(tab + 1);
+    if (!at.isValid() || at.secsTo(QDateTime::currentDateTimeUtc()) > kPendingMaxAgeSeconds) {
+        (void)state->setValue(kPendingKey, "");
+        return; // pedido antigo demais: o momento de desligar já passou
+    }
+    if (anotherJobRunning(set, job.id))
+        return; // ainda não é a última
+    (void)state->setValue(kPendingKey, "");
+    shutdownNow("pedido por \"" + requester + "\", que terminou enquanto outras tarefas rodavam");
 }
 
 int cmdStatus(const QStringList& args)
