@@ -14,6 +14,9 @@ namespace synkro {
 struct RestorableFile {
     CatalogEntry entry;
     std::wstring versionRunId; // vazio = current/; senão versions/<run>/
+    std::wstring storedPath{}; // onde o arquivo está no cofre, se diferente de entry (renomeado sem cópia)
+
+    const std::wstring& vaultPath() const { return storedPath.empty() ? entry.meta.relativePath : storedPath; }
 };
 
 // Reconstrói o estado da origem numa execução retida (point-in-time).

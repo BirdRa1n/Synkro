@@ -67,6 +67,7 @@ struct Env {
         BackupRequest r;
         r.jobId = L"teste";
         r.sourceRoot = source;
+        r.mainAlias = L"origem";
         if (vaults.empty())
             vaults = {vaultA};
         for (auto& v : vaults)
@@ -120,14 +121,17 @@ private slots:
         QCOMPARE(r2.vaults[0].unchanged, 3ull);
     }
 
-    // Várias pastas: a principal continua na raiz do cofre (tarefas antigas não
-    // mudam ao ganhar uma pasta nova) e cada adicional fica em <alias>/.
-    void multipleSourcesKeepMainAtRootAndRestore()
+    // Tarefa antiga (uma pasta, na raiz) que ganha uma segunda pasta: o cofre
+    // é reorganizado — cada pasta na sua subpasta — sem recopiar nada, e a
+    // restauração de antes da mudança continua funcionando.
+    void addingSourceReorganizesWithoutCopying()
     {
         Env env;
-        env.put(L"XML\\a.xml", "<a/>");
+        env.put(L"XML\\a.xml", "<a v='1'/>");
         auto r1 = runBackup(env.request());
         QVERIFY2(r1.status == RunStatus::Success, err(r1));
+        const auto L = env.layout(env.vaultA);
+        QCOMPARE(readFile(L.currentFile(L"XML/a.xml")), QByteArray("<a v='1'/>")); // pasta única: raiz
 
         const std::wstring fiscal = win::joinPath(env.root, L"fiscal");
         QVERIFY(writeFile(win::joinPath(fiscal, L"2026\\nota.xml"), "<nota/>"));
@@ -136,30 +140,125 @@ private slots:
         QThread::msleep(1100);
         auto r2 = runBackup(req);
         QVERIFY2(r2.status == RunStatus::Success, err(r2));
-        QCOMPARE(r2.vaults[0].added, 1ull);      // só a pasta nova
-        QCOMPARE(r2.vaults[0].deleted, 0ull);    // nada da principal "sumiu"
+        QCOMPARE(r2.vaults[0].reorganized, size_t(1));
+        QCOMPARE(r2.vaults[0].added, 1ull);      // só a pasta nova é copiada
+        QCOMPARE(r2.vaults[0].deleted, 0ull);
+        QCOMPARE(r2.vaults[0].modified, 0ull);
         QCOMPARE(r2.vaults[0].unchanged, 1ull);
-
-        const auto L = env.layout(env.vaultA);
-        QCOMPARE(readFile(L.currentFile(L"XML/a.xml")), QByteArray("<a/>"));
+        QCOMPARE(readFile(L.currentFile(L"origem/XML/a.xml")), QByteArray("<a v='1'/>"));
         QCOMPARE(readFile(L.currentFile(L"Fiscal/2026/nota.xml")), QByteArray("<nota/>"));
+        QVERIFY(!ops::pathExists(L.currentFile(L"XML/a.xml")));
+        QVERIFY(!ops::pathExists(win::joinPath(L.root(), L"layout-migration.json")));
 
-        // Mudança na pasta adicional vira versão, como na principal.
-        QVERIFY(writeFile(win::joinPath(fiscal, L"2026\\nota.xml"), "<nota v='2'/>"));
+        // Mudança depois da reorganização: a versão anterior vai para versions/.
+        env.put(L"XML\\a.xml", "<a v='2' maior='sim'/>");
+        env.touchLater(L"XML\\a.xml");
         QThread::msleep(1100);
         auto r3 = runBackup(req);
         QVERIFY2(r3.status == RunStatus::Success, err(r3));
         QCOMPARE(r3.vaults[0].modified, 1ull);
-        QCOMPARE(readFile(L.versionFile(r3.runId, L"Fiscal/2026/nota.xml")), QByteArray("<nota/>"));
+        QCOMPARE(readFile(L.versionFile(r3.runId, L"origem/XML/a.xml")), QByteArray("<a v='1'/>"));
 
         RestoreRequest rq;
         rq.vaultLocation = env.vaultA;
         rq.jobId = L"teste";
         rq.targetDirectory = win::joinPath(env.root, L"restaurado");
-        auto restored = restore(rq);
-        QVERIFY2(restored.ok(), restored.ok() ? "" : restored.error().message.c_str());
-        QCOMPARE(restored.value().restored, size_t(2));
-        QCOMPARE(readFile(win::joinPath(rq.targetDirectory, L"Fiscal\\2026\\nota.xml")), QByteArray("<nota v='2'/>"));
+        auto latest = restore(rq);
+        QVERIFY2(latest.ok(), latest.ok() ? "" : latest.error().message.c_str());
+        QCOMPARE(latest.value().restored, size_t(2));
+        QCOMPARE(readFile(win::joinPath(rq.targetDirectory, L"origem\\XML\\a.xml")), QByteArray("<a v='2' maior='sim'/>"));
+        QCOMPARE(readFile(win::joinPath(rq.targetDirectory, L"Fiscal\\2026\\nota.xml")), QByteArray("<nota/>"));
+
+        // Execução de antes da reorganização: volta como era (pasta única).
+        rq.runId = r1.runId;
+        rq.targetDirectory = win::joinPath(env.root, L"restaurado-r1");
+        auto old = restore(rq);
+        QVERIFY2(old.ok(), old.ok() ? "" : old.error().message.c_str());
+        QVERIFY2(old.value().failures.empty(),
+                 old.value().failures.empty() ? "" : old.value().failures.front().second.c_str());
+        QCOMPARE(old.value().restored, size_t(1));
+        QCOMPARE(readFile(win::joinPath(rq.targetDirectory, L"XML\\a.xml")), QByteArray("<a v='1'/>"));
+    }
+
+    // Cofre da 0.9.0-beta.6: pasta principal na raiz e a adicional em <alias>/
+    // ao lado. A reorganização põe a principal na subpasta e deixa a outra.
+    void beta6LayoutIsReorganized()
+    {
+        Env env;
+        env.put(L"XML\\a.xml", "<a/>");
+        env.put(L"Fiscal\\nota.xml", "<nota/>"); // simula "Fiscal/" gravado pela pasta adicional
+        auto r1 = runBackup(env.request());
+        QVERIFY2(r1.status == RunStatus::Success, err(r1));
+
+        // A pasta adicional é a mesma (movida, mantém identidade e datas).
+        const std::wstring fiscal = win::joinPath(env.root, L"fiscal");
+        QVERIFY(::MoveFileExW(win::toExtendedPath(win::joinPath(env.source, L"Fiscal")).c_str(),
+                              win::toExtendedPath(fiscal).c_str(), 0));
+        auto req = env.request();
+        req.moreSources.push_back({fiscal, L"Fiscal"});
+        QThread::msleep(1100);
+        auto r2 = runBackup(req);
+        QVERIFY2(r2.status == RunStatus::Success, err(r2));
+        QCOMPARE(r2.vaults[0].reorganized, size_t(1)); // só o arquivo da principal mudou de lugar
+        QCOMPARE(r2.vaults[0].added + r2.vaults[0].modified + r2.vaults[0].deleted, 0ull);
+        QCOMPARE(r2.vaults[0].unchanged, 2ull);
+        const auto L = env.layout(env.vaultA);
+        QCOMPARE(readFile(L.currentFile(L"origem/XML/a.xml")), QByteArray("<a/>"));
+        QCOMPARE(readFile(L.currentFile(L"Fiscal/nota.xml")), QByteArray("<nota/>"));
+    }
+
+    // Queda de energia no meio da reorganização: a próxima execução termina.
+    void interruptedReorganizationResumes()
+    {
+        Env env;
+        env.put(L"XML\\a.xml", "<a/>");
+        auto r1 = runBackup(env.request());
+        QVERIFY2(r1.status == RunStatus::Success, err(r1));
+        const auto L = env.layout(env.vaultA);
+
+        // Reproduz o passo 1 já feito: marcador gravado e current\ movido para
+        // current.layout\origem, mas current.layout ainda não renomeado.
+        const QByteArray marker = "{\"format\":\"synkro-layout-migration\",\"main\":\"origem\",\"extras\":[\"Fiscal\"],"
+                                  "\"run_id\":\"" + QString::fromStdWString(newRunId()).toUtf8() + "\",\"token\":\"abc123\"}";
+        QVERIFY(writeFile(win::joinPath(L.root(), L"layout-migration.json"), marker));
+        QVERIFY(writeFile(win::joinPath(L.current(), L".synkro-layout-abc123"), ""));
+        const std::wstring staging = win::joinPath(L.root(), L"current.layout");
+        QVERIFY(win::createDirectories(staging).ok());
+        QVERIFY(::MoveFileExW(win::toExtendedPath(L.current()).c_str(),
+                              win::toExtendedPath(win::joinPath(staging, L"origem")).c_str(), 0));
+
+        const std::wstring fiscal = win::joinPath(env.root, L"fiscal");
+        QVERIFY(writeFile(win::joinPath(fiscal, L"nota.xml"), "<nota/>"));
+        auto req = env.request();
+        req.moreSources.push_back({fiscal, L"Fiscal"});
+        QThread::msleep(1100);
+        auto r2 = runBackup(req);
+        QVERIFY2(r2.status == RunStatus::Success, err(r2));
+        QCOMPARE(r2.vaults[0].unchanged, 1ull);
+        QCOMPARE(r2.vaults[0].added, 1ull);
+        QCOMPARE(readFile(L.currentFile(L"origem/XML/a.xml")), QByteArray("<a/>"));
+        QVERIFY(!ops::pathExists(staging));
+        QVERIFY(!ops::pathExists(win::joinPath(L.root(), L"layout-migration.json")));
+        QVERIFY(!ops::pathExists(L.currentFile(L"origem/.synkro-layout-abc123")));
+    }
+
+    // Volta a ter uma pasta só: o cofre já organizado continua em subpastas.
+    void folderLayoutIsKeptWithSingleSource()
+    {
+        Env env;
+        env.put(L"a.txt", "a");
+        const std::wstring extra = win::joinPath(env.root, L"extra");
+        QVERIFY(writeFile(win::joinPath(extra, L"b.txt"), "b"));
+        auto req = env.request();
+        req.moreSources.push_back({extra, L"extra"});
+        auto r1 = runBackup(req);
+        QVERIFY2(r1.status == RunStatus::Success, err(r1));
+        QThread::msleep(1100);
+        auto r2 = runBackup(env.request()); // só a principal
+        QCOMPARE(int(r2.status), int(RunStatus::Success));
+        QCOMPARE(r2.vaults[0].unchanged, 1ull);  // origem/a.txt continua no lugar
+        QCOMPARE(r2.vaults[0].deleted, 1ull);    // extra/b.txt sai (vira versão)
+        QVERIFY(ops::pathExists(env.layout(env.vaultA).currentFile(L"origem/a.txt")));
     }
 
     void emptyExtraSourceIsBlocked()
@@ -180,19 +279,6 @@ private slots:
         auto r2 = runBackup(req);
         QCOMPARE(int(r2.status), int(RunStatus::Blocked));
         QVERIFY(ops::pathExists(env.layout(env.vaultA).currentFile(L"pendrive/x.txt")));
-    }
-
-    void extraSourceNameCollisionFails()
-    {
-        Env env;
-        env.put(L"Fiscal\\ja-existe.txt", "x");
-        const std::wstring fiscal = win::joinPath(env.root, L"fiscal");
-        QVERIFY(writeFile(win::joinPath(fiscal, L"nota.xml"), "<nota/>"));
-        auto req = env.request();
-        req.moreSources.push_back({fiscal, L"fiscal"});
-        auto r = runBackup(req);
-        QCOMPARE(int(r.status), int(RunStatus::Failed));
-        QVERIFY(r.error.find("mesmo nome") != std::string::npos);
     }
 
     void modificationKeepsPreviousVersionAndPointInTimeRestore()

@@ -18,12 +18,14 @@ const char* nameOf(ManifestOp op) noexcept
     case ManifestOp::Modified: return "modified";
     case ManifestOp::Deleted:  return "deleted";
     case ManifestOp::Failed:   return "failed";
+    case ManifestOp::Renamed:  return "renamed";
     }
     return "unknown";
 }
 
 static std::optional<ManifestOp> parseOp(const QString& s)
 {
+    if (s == QLatin1String("renamed"))  return ManifestOp::Renamed;
     if (s == QLatin1String("added"))    return ManifestOp::Added;
     if (s == QLatin1String("modified")) return ManifestOp::Modified;
     if (s == QLatin1String("deleted"))  return ManifestOp::Deleted;

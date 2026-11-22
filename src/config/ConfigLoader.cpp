@@ -623,9 +623,22 @@ std::wstring normalizedFolder(std::wstring p)
     return p;
 }
 
+std::wstring lastComponent(const std::wstring& path)
+{
+    const auto cut = path.find_last_of(L'\\');
+    return cut == std::wstring::npos ? std::wstring() : path.substr(cut + 1);
+}
+
+bool validFolderAlias(const std::wstring& alias)
+{
+    static const std::wstring invalid = L"\\/:*?\"<>|";
+    return !(alias.empty() || alias == L"." || alias == L".." || alias.size() > 64
+             || alias.find_first_of(invalid) != std::wstring::npos || alias.back() == L' ' || alias.back() == L'.');
+}
+
 // `source: "C:/PDV"` (uma pasta, como sempre foi) ou `sources:` com várias.
-// Na lista, a 1ª pasta é a principal (raiz do cofre); as demais ganham uma
-// subpasta no cofre: `name:` ou o nome da própria pasta.
+// Com várias, cada pasta (inclusive a 1ª) fica numa subpasta do cofre:
+// `name:` ou o nome da própria pasta.
 void parseSources(Reader& r, const YAML::Node& doc, FilesJob& f)
 {
     const YAML::Node one = doc["source"];
@@ -637,6 +650,7 @@ void parseSources(Reader& r, const YAML::Node& doc, FilesJob& f)
     if (!many) {
         if (auto s = r.str(doc, "source", "", true)) {
             f.source = normalizedFolder(w(*s));
+            f.sourceAlias = lastComponent(f.source); // usado se o cofre já estiver organizado em subpastas
             if (!isAbsoluteWindowsPath(f.source))
                 r.error(one, "source", "informe o caminho completo da pasta (ex.: \"C:/PDV\")");
         }
@@ -680,34 +694,28 @@ void parseSources(Reader& r, const YAML::Node& doc, FilesJob& f)
         }
         seenPaths.push_back(folded);
 
+        sf.alias = sf.name.empty() ? lastComponent(sf.path) : sf.name;
         if (i == 0) {
-            if (!sf.name.empty())
-                r.error(item, key + ".name",
-                        "a primeira pasta fica na raiz do cofre (como numa tarefa de uma pasta só); name vale para as demais");
             f.source = sf.path;
-            continue;
+            f.sourceName = sf.name;
+            f.sourceAlias = sf.alias;
         }
-        sf.alias = sf.name;
-        if (sf.alias.empty()) {
-            const auto cut = sf.path.find_last_of(L'\\');
-            sf.alias = cut == std::wstring::npos ? std::wstring() : sf.path.substr(cut + 1);
+        // Com uma pasta só (lista de 1 item), ela fica na raiz: o nome não importa.
+        if (many.size() > 1) {
+            if (!validFolderAlias(sf.alias)) {
+                r.error(item, key + ".name",
+                        sf.name.empty() ? "não dá para usar o nome desta pasta no cofre; informe name (ex.: name: fiscal)"
+                                        : "nome inválido para uma pasta do cofre");
+                continue;
+            }
+            if (!seenAliases.insert(win::foldCase(sf.alias)).second) {
+                r.error(item, key + ".name",
+                        "outra pasta já usa o nome \"" + win::toUtf8(sf.alias) + "\" no cofre; informe name para diferenciar");
+                continue;
+            }
         }
-        static const std::wstring invalid = L"\\/:*?\"<>|";
-        const bool bad = sf.alias.empty() || sf.alias == L"." || sf.alias == L".." || sf.alias.size() > 64
-                         || sf.alias.find_first_of(invalid) != std::wstring::npos || sf.alias.back() == L' '
-                         || sf.alias.back() == L'.';
-        if (bad) {
-            r.error(item, key + ".name",
-                    sf.name.empty() ? "não dá para usar o nome desta pasta no cofre; informe name (ex.: name: fiscal)"
-                                    : "nome inválido para uma pasta do cofre");
-            continue;
-        }
-        if (!seenAliases.insert(win::foldCase(sf.alias)).second) {
-            r.error(item, key + ".name",
-                    "outra pasta já usa o nome \"" + win::toUtf8(sf.alias) + "\" no cofre; informe name para diferenciar");
-            continue;
-        }
-        f.moreSources.push_back(std::move(sf));
+        if (i > 0)
+            f.moreSources.push_back(std::move(sf));
     }
 }
 
@@ -1487,7 +1495,9 @@ void parseGlobalImpl(Reader& r, const std::optional<YAML::Node>& doc, GlobalConf
 
     if (const YAML::Node s = (*doc)["shutdown"]) {
         if (r.requireMap(s, "shutdown")) {
-            r.checkKeys(s, "shutdown", {"countdown", "allowed_after"});
+            r.checkKeys(s, "shutdown", {"countdown", "allowed_after", "force_close_apps"});
+            if (auto f = r.boolean(s, "force_close_apps", "shutdown"))
+                g.shutdownForceApps = *f;
             if (auto t = r.duration(s, "countdown", "shutdown")) {
                 if (*t < 30)
                     r.error(s["countdown"], "shutdown.countdown", "mínimo de 30s para o usuário poder cancelar");

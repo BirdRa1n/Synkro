@@ -116,6 +116,7 @@ schedule:
         const JobConfig job = parseJobDocument(yaml, L"jobs\\pdv-arquivos.yml", sampleGlobal(), d);
         QVERIFY2(d.empty(), qPrintable(dump(d)));
         QCOMPARE(job.files.source, std::wstring(L"C:\\PDV"));
+        QCOMPARE(job.files.sourceAlias, std::wstring(L"PDV"));
         QCOMPARE(job.files.moreSources.size(), size_t(2));
         QCOMPARE(job.files.moreSources[0].path, std::wstring(L"D:\\Fiscal"));
         QCOMPARE(job.files.moreSources[0].alias, std::wstring(L"Fiscal"));
@@ -136,7 +137,10 @@ schedule:
         QVERIFY(hasError(diagnose(job("sources: [\"C:/A\", \"C:/a/\"]\n")), "sources[1]", "repetida"));
         QVERIFY(hasError(diagnose(job("sources: [\"C:/A\", \"C:/A/B\"]\n")), "sources[1]", "dentro de outra"));
         QVERIFY(hasError(diagnose(job("sources: [\"C:/A\", \"D:/x/Notas\", \"E:/y/notas\"]\n")), "sources[2].name", "já usa"));
-        QVERIFY(hasError(diagnose(job("sources: [{ path: \"C:/A\", name: a }]\n")), "sources[0].name", "raiz"));
+        QVERIFY(hasError(diagnose(job("sources: [{ path: \"C:/A\", name: x }, { path: \"D:/B\", name: X }]\n")),
+                         "sources[1].name", "já usa"));
+        QVERIFY(hasError(diagnose(job("sources: [\"C:/\", \"D:/B\"]\n")), "sources[0].name", "informe name"));
+        QVERIFY(diagnose(job("sources: [{ path: \"C:/\", name: sistema }, \"D:/B\"]\n")).empty());
         QVERIFY(hasError(diagnose(job("sources: [\"C:/A\", \"relativo/x\"]\n")), "sources[1]", "caminho completo"));
         QVERIFY(hasError(diagnose(job("sources: []\n")), "sources", "lista"));
     }

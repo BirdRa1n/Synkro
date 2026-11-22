@@ -5,6 +5,7 @@
 #include "core/RunId.h"
 #include "crypto/VaultKey.h"
 #include "engine/Journal.h"
+#include "engine/LayoutMigration.h"
 #include "engine/Recovery.h"
 #include "engine/Retention.h"
 #include "engine/RunSummary.h"
@@ -54,11 +55,18 @@ namespace {
 constexpr std::size_t kMaxReportedFileErrors = 50;
 
 // Uma pasta de origem já resolvida: de onde ler (talvez dentro do snapshot) e
-// o prefixo dos seus arquivos no catálogo ("" = pasta principal, na raiz).
+// o prefixo dos seus arquivos no catálogo ("" = pasta única, na raiz).
 struct ReadRoot {
     std::wstring prefix;   // "<alias>/" no formato do catálogo
     std::wstring readPath;
     std::wstring label;    // caminho real, para mensagens
+};
+
+// Varredura de uma pasta, com os caminhos relativos a ela (sem prefixo).
+struct SourceScan {
+    ReadRoot root;
+    ScanResult scan;
+    bool main = false;
 };
 
 bool startsWith(const std::wstring& s, const std::wstring& prefix)
@@ -66,11 +74,45 @@ bool startsWith(const std::wstring& s, const std::wstring& prefix)
     return !prefix.empty() && s.size() > prefix.size() && s.compare(0, prefix.size(), prefix) == 0;
 }
 
+// Junta as varreduras no formato do cofre: com `folders`, a pasta principal
+// ganha o prefixo <mainAlias>/; sem, fica na raiz (pasta única).
+std::pair<ScanResult, std::vector<ReadRoot>> mergeScans(const std::vector<SourceScan>& scans, bool folders,
+                                                        const std::wstring& mainAlias)
+{
+    ScanResult all;
+    std::vector<ReadRoot> roots;
+    for (const auto& s : scans) {
+        ReadRoot root = s.root;
+        if (s.main)
+            root.prefix = folders ? win::toCatalogPath(mainAlias) + L"/" : std::wstring();
+        for (const auto& f : s.scan.files) {
+            FileEntry e = f;
+            e.relativePath = root.prefix + e.relativePath;
+            all.files.push_back(std::move(e));
+        }
+        for (const auto& l : s.scan.skippedLinks)
+            all.skippedLinks.push_back(root.prefix + l);
+        for (const auto& i : s.scan.issues)
+            all.issues.push_back({root.prefix + i.relativePath, i.error});
+        all.totalBytes += s.scan.totalBytes;
+        all.directoryCount += s.scan.directoryCount;
+        roots.push_back(std::move(root));
+    }
+    if (scans.size() > 1 || folders) {
+        std::sort(all.files.begin(), all.files.end(),
+                  [](const FileEntry& a, const FileEntry& b) { return a.relativePath < b.relativePath; });
+        std::sort(all.skippedLinks.begin(), all.skippedLinks.end());
+    }
+    // A pasta principal primeiro: sourcePathOf() a usa quando nenhum prefixo casa.
+    std::stable_partition(roots.begin(), roots.end(), [](const ReadRoot& r) { return r.prefix.empty(); });
+    return {std::move(all), std::move(roots)};
+}
+
 class VaultRun {
 public:
-    VaultRun(const BackupRequest& req, const std::wstring& runId, const ScanResult& scan, const VaultTarget& target,
-             const std::vector<ReadRoot>& roots)
-        : m_req(req), m_runId(runId), m_scan(scan), m_target(target), m_roots(roots)
+    VaultRun(const BackupRequest& req, const std::wstring& runId, const std::vector<SourceScan>& scans,
+             const VaultTarget& target)
+        : m_req(req), m_runId(runId), m_scans(scans), m_target(target)
     {
         m_result.location = target.location;
     }
@@ -135,6 +177,34 @@ private:
         if (!recovered)
             return recovered.error();
         m_result.recoveredRuns = recovered.value().size();
+
+        // Layout: várias pastas (ou cofre já organizado assim) = uma subpasta
+        // por pasta. Cofre antigo é reorganizado agora, só com renomeações.
+        const bool folders = !m_req.moreSources.empty() || catalog.folderLayout || layoutMigrationPending(m_layout);
+        if (folders && !catalog.folderLayout) {
+            if (catalog.entries.empty() && !layoutMigrationPending(m_layout)) {
+                catalog.folderLayout = true; // cofre novo para a tarefa: já nasce organizado
+            } else {
+                LayoutMigrationPlan plan;
+                plan.mainAlias = m_req.mainAlias;
+                for (const auto& s : m_req.moreSources)
+                    plan.extraAliases.push_back(s.alias);
+                plan.runId = migrationRunId(catalog.runId);
+                auto migrated = migrateToFolderLayout(m_layout, catalog, plan);
+                if (!migrated)
+                    return Error::make(migrated.error().code,
+                                       "não foi possível reorganizar o cofre em subpastas (nada foi copiado; tenta de novo na "
+                                       "próxima execução): " + migrated.error().message);
+                m_result.reorganized = migrated.value().renamed;
+            }
+        } else if (layoutMigrationPending(m_layout)) {
+            // Marcador antigo com o catálogo já organizado: só termina a limpeza.
+            if (auto migrated = migrateToFolderLayout(m_layout, catalog, {}); !migrated)
+                return migrated.error();
+        }
+        auto merged = mergeScans(m_scans, folders, m_req.mainAlias);
+        m_scan = std::move(merged.first);
+        m_roots = std::move(merged.second);
 
         std::vector<KnownFile> known;
         known.reserve(catalog.entries.size());
@@ -345,6 +415,8 @@ private:
             if (m_result.fileErrors.size() < kMaxReportedFileErrors)
                 m_result.fileErrors.emplace_back(rec.path, rec.error);
             break;
+        case ManifestOp::Renamed:
+            break; // só na reorganização do cofre (LayoutMigration)
         }
         if (auto st = journal.recordDone(rec); !st)
             return st;
@@ -376,11 +448,27 @@ private:
         (void)s.save(m_layout.summaryFile(m_runId));
     }
 
+    // Id da "execução" de reorganização: logo antes deste backup e depois do
+    // último registrado no catálogo, para a restauração desfazer na ordem certa.
+    std::wstring migrationRunId(const std::wstring& previous) const
+    {
+        const QDateTime now = runIdTimestamp(m_runId);
+        for (int back : {1, 0}) {
+            std::wstring id = newRunId(now.addSecs(-back));
+            if (back == 0)
+                id = id.substr(0, 18) + L"0000";
+            if ((previous.empty() || id > previous) && id < m_runId)
+                return id;
+        }
+        return newRunId(now.addSecs(-1));
+    }
+
     const BackupRequest& m_req;
     const std::wstring& m_runId;
-    const ScanResult& m_scan;
+    const std::vector<SourceScan>& m_scans;
     const VaultTarget& m_target;
-    const std::vector<ReadRoot>& m_roots; // pastas de origem (ou o equivalente dentro do snapshot VSS)
+    ScanResult m_scan;              // arquivos no formato deste cofre
+    std::vector<ReadRoot> m_roots;  // pastas de origem (ou o equivalente dentro do snapshot VSS)
     vault::JobLayout m_layout;
     std::shared_ptr<const crypto::FileCipher> m_cipher; // cofre cifrado; nulo = em claro
     VaultRunResult m_result;
@@ -465,7 +553,8 @@ BackupResult runBackup(const BackupRequest& req)
         return result;
     }
 
-    // Pastas de origem: a principal (raiz do cofre) e as adicionais (<alias>/).
+    // Pastas de origem: a principal e as adicionais (<alias>/). O prefixo da
+    // principal depende do layout de cada cofre (mergeScans).
     std::vector<ReadRoot> roots;
     roots.push_back({{}, req.sourceRoot, req.sourceRoot});
     for (const auto& s : req.moreSources)
@@ -517,62 +606,27 @@ BackupResult runBackup(const BackupRequest& req)
         const PathFilter& f = req.filter;
         scanOpt.filter = [&f](std::wstring_view p, bool isDir) { return f.accepts(p, isDir); };
     }
-    Result<ScanResult> scan = ScanResult{};
-    for (const auto& root : roots) {
-        auto part = scanDirectory(root.readPath, scanOpt);
+    std::vector<SourceScan> scans;
+    for (std::size_t i = 0; i < roots.size(); ++i) {
+        auto part = scanDirectory(roots[i].readPath, scanOpt);
         if (!part) {
-            result.error = "origem inacessível (" + win::toUtf8(root.label) + "): " + part.error().message;
+            result.error = "origem inacessível (" + win::toUtf8(roots[i].label) + "): " + part.error().message;
             snapshots.clear();
             finishHooks(result);
             return result;
         }
-        ScanResult& all = scan.value();
-        if (root.prefix.empty()) {
-            // A pasta principal não pode ter um item com o nome de uma pasta
-            // adicional: os dois iriam para o mesmo lugar no cofre.
-            for (const auto& other : roots) {
-                if (other.prefix.empty())
-                    continue;
-                const std::wstring top = win::foldCase(other.prefix);
-                for (const auto& f : part.value().files) {
-                    const std::wstring folded = win::foldCase(f.relativePath);
-                    if (folded.rfind(top, 0) == 0 || folded + L"/" == top) {
-                        result.error = "a pasta " + win::toUtf8(root.label) + " já tem um item chamado \""
-                                       + win::toUtf8(other.prefix.substr(0, other.prefix.size() - 1))
-                                       + "\", o mesmo nome da pasta adicional " + win::toUtf8(other.label)
-                                       + " no cofre; dê outro name a ela em sources";
-                        snapshots.clear();
-                        finishHooks(result);
-                        return result;
-                    }
-                }
-            }
-        }
-        for (auto& f : part.value().files) {
-            f.relativePath = root.prefix + f.relativePath;
-            all.files.push_back(std::move(f));
-        }
-        for (auto& l : part.value().skippedLinks)
-            all.skippedLinks.push_back(root.prefix + l);
-        for (auto& i : part.value().issues) {
-            i.relativePath = root.prefix + i.relativePath;
-            all.issues.push_back(std::move(i));
-        }
-        all.totalBytes += part.value().totalBytes;
-        all.directoryCount += part.value().directoryCount;
+        scans.push_back({roots[i], std::move(part).value(), i == 0});
     }
-    if (roots.size() > 1) {
-        std::sort(scan.value().files.begin(), scan.value().files.end(),
-                  [](const FileEntry& a, const FileEntry& b) { return a.relativePath < b.relativePath; });
-        std::sort(scan.value().skippedLinks.begin(), scan.value().skippedLinks.end());
-    }
-    result.filesScanned = scan.value().files.size();
-    result.bytesScanned = scan.value().totalBytes;
+    // Visão "da configuração" (várias pastas = subpastas) para as guardas de
+    // origem; cada cofre monta a sua conforme o layout dele.
+    const ScanResult logical = mergeScans(scans, !req.moreSources.empty(), req.mainAlias).first;
+    result.filesScanned = logical.files.size();
+    result.bytesScanned = logical.totalBytes;
     if (req.progress)
-        req.progress({ProgressKind::ScanFinished, {}, {}, scan.value().files.size(), scan.value().files.size()});
+        req.progress({ProgressKind::ScanFinished, {}, {}, logical.files.size(), logical.files.size()});
 
     if (!req.overrideGuards) {
-        result.sourceGuard = evaluateSourceGuards(req.guards, scan.value());
+        result.sourceGuard = evaluateSourceGuards(req.guards, logical);
         if (result.sourceGuard.blocked()) {
             result.status = RunStatus::Blocked;
             result.error = result.sourceGuard.message;
@@ -584,7 +638,7 @@ BackupResult runBackup(const BackupRequest& req)
     for (const auto& target : req.vaults) {
         if (req.progress)
             req.progress({ProgressKind::VaultStarted, target.location, {}, 0, 0});
-        VaultRun run(req, result.runId, scan.value(), target, roots);
+        VaultRun run(req, result.runId, scans, target);
         result.vaults.push_back(run.run());
         if (req.progress)
             req.progress({ProgressKind::VaultFinished, target.location, {}, 0, 0});

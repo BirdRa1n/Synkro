@@ -24,6 +24,12 @@ static void applyRecord(Catalog& catalog, const ManifestRecord& r)
         break;
     case ManifestOp::Failed:
         break;
+    case ManifestOp::Renamed:
+        if (r.previous)
+            catalog.remove(r.previous->meta.relativePath);
+        if (r.entry)
+            catalog.upsert(*r.entry);
+        break;
     }
 }
 

@@ -58,9 +58,26 @@ Result<std::vector<RestorableFile>> stateAtRun(const vault::JobLayout& layout, c
             auto manifest = Manifest::load(layout.manifestFile(*it));
             if (!manifest)
                 return manifest.error();
-            for (const auto& r : manifest.value().records) {
+            // Desfaz na ordem inversa: numa reorganização, os arquivos são
+            // renomeados antes de a execução mexer neles.
+            const auto& records = manifest.value().records;
+            for (auto rit = records.rbegin(); rit != records.rend(); ++rit) {
+                const ManifestRecord& r = *rit;
                 const std::wstring key = win::foldCase(r.path);
                 switch (r.op) {
+                case ManifestOp::Renamed:
+                    if (r.previous) {
+                        auto found = state.find(key);
+                        if (found == state.end())
+                            break;
+                        RestorableFile moved = found->second;
+                        if (moved.storedPath.empty())
+                            moved.storedPath = moved.entry.meta.relativePath; // continua guardado no lugar novo
+                        moved.entry.meta.relativePath = r.previous->meta.relativePath;
+                        state.erase(found);
+                        state[win::foldCase(r.previous->meta.relativePath)] = std::move(moved);
+                    }
+                    break;
                 case ManifestOp::Added:
                     state.erase(key);
                     break;
@@ -142,8 +159,8 @@ Result<RestoreResult> restore(const RestoreRequest& req)
         if (!underPrefix(path, req.pathPrefix))
             continue;
 
-        const std::wstring source = f.versionRunId.empty() ? layout.currentFile(path)
-                                                           : layout.versionFile(f.versionRunId, path);
+        const std::wstring source = f.versionRunId.empty() ? layout.currentFile(f.vaultPath())
+                                                           : layout.versionFile(f.versionRunId, f.vaultPath());
         if (!ops::pathExists(source)) {
             result.failures.emplace_back(path, f.versionRunId.empty()
                                                    ? "arquivo ausente em current/ do cofre"

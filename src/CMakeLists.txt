@@ -77,6 +77,8 @@ add_library(synkro_core STATIC
     engine/Journal.cpp
     engine/Recovery.h
     engine/Recovery.cpp
+    engine/LayoutMigration.h
+    engine/LayoutMigration.cpp
     engine/Restore.h
     engine/Restore.cpp
     engine/Retention.h

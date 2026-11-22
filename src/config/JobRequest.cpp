@@ -56,6 +56,7 @@ Result<BackupRequest> makeBackupRequest(const ConfigSet& set, const JobConfig& j
     BackupRequest req;
     req.jobId = win::fromUtf8(job.id);
     req.sourceRoot = job.files.source;
+    req.mainAlias = job.files.sourceAlias.empty() ? std::wstring(L"origem") : job.files.sourceAlias;
     for (const auto& s : job.files.moreSources)
         req.moreSources.push_back({s.path, s.alias});
     req.minVaultsOk = static_cast<std::size_t>(job.minVaultsOk);

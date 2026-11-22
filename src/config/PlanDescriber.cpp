@@ -77,7 +77,7 @@ void describeFiles(std::ostringstream& o, const ConfigSet& set, const JobConfig&
         o << "  " << step++ << ". Ler a pasta " << win::toUtf8(f.source);
     } else {
         o << "  " << step++ << ". Ler " << (f.moreSources.size() + 1) << " pastas:\n"
-          << "       • " << win::toUtf8(f.source) << " (na raiz do cofre)\n";
+          << "       • " << win::toUtf8(f.source) << " (no cofre em " << win::toUtf8(f.sourceAlias) << "\\)\n";
         for (const auto& s : f.moreSources)
             o << "       • " << win::toUtf8(s.path) << " (no cofre em " << win::toUtf8(s.alias) << "\\)\n";
         o << "     ";

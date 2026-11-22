@@ -8,7 +8,7 @@
 
 namespace synkro {
 
-enum class ManifestOp { Added, Modified, Deleted, Failed };
+enum class ManifestOp { Added, Modified, Deleted, Failed, Renamed };
 
 const char* nameOf(ManifestOp op) noexcept;
 
@@ -18,6 +18,8 @@ const char* nameOf(ManifestOp op) noexcept;
 // - Modified: `entry` é a nova versão; `previous` foi movido para versions/<run>
 // - Deleted:  `previous` foi movido para versions/<run>
 // - Failed:   `error` descreve o problema; nada mudou para esse caminho
+// - Renamed:  o arquivo mudou de lugar no cofre sem ser copiado (reorganização
+//             em subpastas): `previous` tem o caminho antigo, `entry`/`path` o novo
 struct ManifestRecord {
     ManifestOp op = ManifestOp::Added;
     std::wstring path;

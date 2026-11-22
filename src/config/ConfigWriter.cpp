@@ -362,6 +362,8 @@ std::string emitGlobal(const GlobalConfig& g)
     o << "\nshutdown:\n  countdown: " << formatDuration(g.shutdownCountdownSeconds) << "\n";
     if (!g.shutdownAllowedGroups.empty())
         o << "  allowed_after: " << list(g.shutdownAllowedGroups) << "\n";
+    if (!g.shutdownForceApps)
+        o << "  force_close_apps: false\n";
 
     o << "\nlogging:\n  level: " << g.logLevel << "\n  keep: " << formatDuration(g.logKeepSeconds) << "\n";
     return withHeader(o.str());
@@ -398,8 +400,11 @@ std::string emitJob(const JobConfig& j)
         if (f.moreSources.empty()) {
             o << "\nsource: " << quote(f.source) << "\n";
         } else {
-            // A 1ª pasta fica na raiz do cofre; as demais, em subpastas.
-            o << "\nsources:\n  - " << quote(f.source) << "\n";
+            // Cada pasta numa subpasta do cofre: o nome da pasta ou `name`.
+            if (f.sourceName.empty())
+                o << "\nsources:\n  - " << quote(f.source) << "\n";
+            else
+                o << "\nsources:\n  - { path: " << quote(f.source) << ", name: " << quote(f.sourceName) << " }\n";
             for (const auto& s : f.moreSources) {
                 if (s.name.empty())
                     o << "  - " << quote(s.path) << "\n";

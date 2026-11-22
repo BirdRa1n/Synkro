@@ -46,8 +46,12 @@ struct SourceRoot {
 
 struct BackupRequest {
     std::wstring jobId;
-    std::wstring sourceRoot;               // pasta principal: raiz do cofre
-    std::vector<SourceRoot> moreSources;   // demais pastas (sources:), cada uma em <alias>/
+    // Uma pasta só: raiz do cofre. Com moreSources (ou num cofre já
+    // organizado em subpastas), cada pasta fica em <alias>/, a principal em
+    // <mainAlias>/ — o cofre antigo é reorganizado sem recópia.
+    std::wstring sourceRoot;
+    std::wstring mainAlias;
+    std::vector<SourceRoot> moreSources;
     std::vector<VaultTarget> vaults;
     std::size_t minVaultsOk = 0;  // 0 = todos os cofres
     PathFilter filter;
@@ -89,6 +93,7 @@ struct VaultRunResult {
     std::uint64_t added = 0, modified = 0, deleted = 0, failed = 0, unchanged = 0;
     std::uint64_t bytesWritten = 0;
     std::size_t recoveredRuns = 0;
+    std::size_t reorganized = 0;  // arquivos movidos para a subpasta da pasta principal (sem cópia)
     std::string error;            // falha do cofre inteiro
     GuardVerdict guard;
     std::vector<std::pair<std::wstring, std::string>> fileErrors; // arquivo -> erro (amostra)

@@ -176,6 +176,8 @@ QByteArray Catalog::serialize() const
     header.insert(QStringLiteral("format_version"), kFormatVersion);
     header.insert(QStringLiteral("run_id"), QString::fromStdWString(runId));
     header.insert(QStringLiteral("count"), static_cast<qint64>(entries.size()));
+    if (folderLayout)
+        header.insert(QStringLiteral("layout"), QStringLiteral("folders"));
 
     QByteArray out = QJsonDocument(header).toJson(QJsonDocument::Compact);
     out.append('\n');
@@ -210,6 +212,7 @@ Result<Catalog> Catalog::parse(const QByteArray& data)
                 return Error::make(ErrorCode::Unsupported, "catálogo de uma versão mais nova do Synkro");
             cat.runId = o.value(QStringLiteral("run_id")).toString().toStdWString();
             expected = o.value(QStringLiteral("count")).toInteger(-1);
+            cat.folderLayout = o.value(QStringLiteral("layout")).toString() == QLatin1String("folders");
             headerSeen = true;
             continue;
         }

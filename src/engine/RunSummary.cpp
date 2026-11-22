@@ -27,6 +27,8 @@ void RunSummary::count(const ManifestRecord& r)
     case ManifestOp::Failed:
         ++failed;
         break;
+    case ManifestOp::Renamed:
+        break; // reorganização: nada foi copiado
     }
 }
 

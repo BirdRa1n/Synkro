@@ -39,6 +39,9 @@ class Catalog {
 public:
     std::wstring runId;                 // execução que produziu este catálogo
     std::vector<CatalogEntry> entries;
+    // Tarefa com várias pastas: cada uma numa subpasta de current\ (cabeçalho
+    // "layout":"folders"). Falso = pasta única na raiz (formato original).
+    bool folderLayout = false;
 
     // Índice por caminho (sem diferenciar maiúsculas). Reconstruído por reindex().
     void reindex();

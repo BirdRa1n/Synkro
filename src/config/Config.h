@@ -130,6 +130,9 @@ struct GlobalConfig {
     bool scrubRepair = true;
 
     std::int64_t shutdownCountdownSeconds = 120;
+    // Fecha programas abertos ao desligar (como `shutdown /s /t`): sem isso, um
+    // programa que pergunta "salvar?" segura o desligamento a noite inteira.
+    bool shutdownForceApps = true;
     std::vector<std::string> shutdownAllowedGroups;
 
     std::string logLevel = "info";
@@ -150,8 +153,7 @@ struct Hooks {
     std::vector<HookCommand> before, after, onSuccess, onFailure;
 };
 
-// Pasta adicional de uma tarefa de arquivos (`sources:`). No cofre, fica em
-// <alias>\ ao lado dos arquivos da pasta principal.
+// Pasta adicional de uma tarefa de arquivos (`sources:` a partir do 2º item).
 struct SourceFolder {
     std::wstring path;
     std::wstring name{};  // `name:` explícito no YAML (vazio = derivado da pasta)
@@ -159,10 +161,13 @@ struct SourceFolder {
 };
 
 struct FilesJob {
-    // Pasta principal: guardada na raiz do cofre, como nas versões com uma só
-    // pasta (`source:`). As demais (`sources:` a partir do 2º item) ficam em
-    // subpastas, então acrescentar uma pasta não move nada do que já existe.
+    // Uma pasta só: os arquivos ficam na raiz do cofre (como sempre foi).
+    // Várias pastas: cada uma, inclusive a principal, fica na sua subpasta
+    // (<alias>\). O cofre de uma tarefa antiga é reorganizado na primeira
+    // execução com várias pastas, só com renomeações (sem recopiar).
     std::wstring source;
+    std::wstring sourceName{};  // `name:` da 1ª pasta em `sources:`
+    std::wstring sourceAlias{}; // subpasta da pasta principal no cofre (quando há várias)
     std::vector<SourceFolder> moreSources;
     std::vector<std::wstring> include, exclude;
     bool vss = true;
